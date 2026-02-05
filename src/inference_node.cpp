@@ -97,6 +97,25 @@ void InferenceNode::apply_action() {
     }
 }
 
+void InferenceNode::control() {
+    pthread_setname_np(pthread_self(), "control");
+    struct sched_param sp{}; sp.sched_priority = 70;
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to set realtime priority for control thread");
+    }
+    auto period = std::chrono::microseconds(static_cast<long long>(dt_ * 1000000));
+    while(rclcpp::ok()){
+        auto loop_start = std::chrono::steady_clock::now();
+        apply_action();
+        auto loop_end = std::chrono::steady_clock::now();
+        auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(loop_end - loop_start);
+        auto sleep_time = period - elapsed_time;
+        if (sleep_time > std::chrono::microseconds(0)) {
+            std::this_thread::sleep_for(sleep_time);
+        }
+    }
+}
+
 void InferenceNode::inference() {
     pthread_setname_np(pthread_self(), "inference");
     struct sched_param sp{}; sp.sched_priority = 70;
@@ -241,15 +260,18 @@ void InferenceNode::inference() {
 }
 
 int main(int argc, char **argv) {
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
+        RCLCPP_WARN(rclcpp::get_logger("main"), "mlockall failed.");
+    }
     pthread_setname_np(pthread_self(), "main");
-    struct sched_param sp{}; sp.sched_priority = 70;
+    struct sched_param sp{}; sp.sched_priority = 50;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
         throw std::runtime_error("Failed to set realtime priority for main thread");
     }
     rclcpp::init(argc, argv);
     try {
         auto node = std::make_shared<InferenceNode>();
-        rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
+        rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
         executor.add_node(node);
         RCLCPP_INFO(node->get_logger(), "Press 'A' to initialize/deinitialize motors");
         RCLCPP_INFO(node->get_logger(), "Press 'X' to reset motors");

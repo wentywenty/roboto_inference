@@ -1,5 +1,6 @@
 #pragma once
 
+#include <sys/mman.h>
 #include <onnxruntime_cxx_api.h>
 #include <string>
 #include <vector>
@@ -75,28 +76,26 @@ class InferenceNode : public rclcpp::Node {
         }
         reset();
 
-        auto sensor_data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-        auto control_command_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
+        auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
         joy_subscription_ = this->create_subscription<sensor_msgs::msg::Joy>(
-            "/joy", sensor_data_qos, std::bind(&InferenceNode::subs_joy_callback, this, std::placeholders::_1));
+            "/joy", data_qos, std::bind(&InferenceNode::subs_joy_callback, this, std::placeholders::_1));
         cmd_subscription_ = this->create_subscription<geometry_msgs::msg::Twist>(
-            "/cmd_vel", sensor_data_qos, std::bind(&InferenceNode::subs_cmd_callback,this, std::placeholders::_1
+            "/cmd_vel", data_qos, std::bind(&InferenceNode::subs_cmd_callback,this, std::placeholders::_1
         ));
         elevation_subscription_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            perception_obs_topic_, sensor_data_qos,
+            perception_obs_topic_, data_qos,
             std::bind(&InferenceNode::subs_elevation_callback, this, std::placeholders::_1));
         joint_state_subscription_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/joint_ref_states", sensor_data_qos,
+            "/joint_ref_states", data_qos,
             std::bind(&InferenceNode::subs_joint_state_callback, this, std::placeholders::_1));
         action_publisher_ =
-            this->create_publisher<sensor_msgs::msg::JointState>("/action", control_command_qos);
+            this->create_publisher<sensor_msgs::msg::JointState>("/action", data_qos);
         imu_publisher_ =
-            this->create_publisher<sensor_msgs::msg::Imu>("/imu", control_command_qos);
+            this->create_publisher<sensor_msgs::msg::Imu>("/imu", data_qos);
         joint_state_publisher_ =
-            this->create_publisher<sensor_msgs::msg::JointState>("/joint_states", control_command_qos);
+            this->create_publisher<sensor_msgs::msg::JointState>("/joint_states", data_qos);
         inference_thread_ = std::thread(&InferenceNode::inference, this);
-        timer_pub_ = this->create_wall_timer(std::chrono::milliseconds((int)(dt_ * 1000)),
-                                             std::bind(&InferenceNode::apply_action, this));
+        control_thread_ = std::thread(&InferenceNode::control, this);
 
         reset_joints_service_ = this->create_service<std_srvs::srv::Trigger>(
             "reset_joints", std::bind(&InferenceNode::reset_joints_srv, this, std::placeholders::_1, std::placeholders::_2));
@@ -122,6 +121,9 @@ class InferenceNode : public rclcpp::Node {
     ~InferenceNode() {
         if (inference_thread_.joinable()) {
             inference_thread_.join();
+        }
+        if (control_thread_.joinable()) {
+            control_thread_.join();
         }
         reset();
         if(robot_){
@@ -162,8 +164,8 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr action_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
-    rclcpp::TimerBase::SharedPtr timer_pub_;
     std::thread inference_thread_;
+    std::thread control_thread_;
     float act_alpha_, gyro_alpha_, angle_alpha_;
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
@@ -189,6 +191,7 @@ class InferenceNode : public rclcpp::Node {
     void subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg);
     void subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg);
     void inference();
+    void control();
     void apply_action();
     void read_joints() {
         joint_pos_ = robot_->get_joint_q();
