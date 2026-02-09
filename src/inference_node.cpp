@@ -56,6 +56,10 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
 
 void InferenceNode::reset() {
     is_running_.store(false);
+    is_interrupt_.store(false);
+    is_beyondmimic_.store(false);
+    obs_.resize(obs_num_);
+    active_ctx_ = normal_ctx_.get();
     std::fill(obs_.begin(), obs_.end(), 0.0f);
     std::fill(joint_pos_.begin(), joint_pos_.end(), 0.0f);
     std::fill(joint_vel_.begin(), joint_vel_.end(), 0.0f);
@@ -64,17 +68,19 @@ void InferenceNode::reset() {
     std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
     std::fill(quat_.begin(), quat_.end(), 0.0f);
     std::fill(ang_vel_.begin(), ang_vel_.end(), 0.0f);
-    if (active_ctx_) {
-        std::fill(active_ctx_->input_buffer.begin(), active_ctx_->input_buffer.end(), 0.0f);
-        std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
+    if (normal_ctx_) {
+        std::fill(normal_ctx_->input_buffer.begin(), normal_ctx_->input_buffer.end(), 0.0f);
+        std::fill(normal_ctx_->output_buffer.begin(), normal_ctx_->output_buffer.end(), 0.0f);
+    }
+    if (motion_ctx_) {
+        std::fill(motion_ctx_->input_buffer.begin(), motion_ctx_->input_buffer.end(), 0.0f);
+        std::fill(motion_ctx_->output_buffer.begin(), motion_ctx_->output_buffer.end(), 0.0f);
     }
     std::fill(act_.begin(), act_.end(), 0.0f);
     std::fill(last_act_.begin(), last_act_.end(), 0.0f);
     std::fill(joint_torques_.begin(), joint_torques_.end(), 0.0f);
     is_first_frame_ = true;
     motion_frame_ = 0;
-    is_interrupt_.store(false);
-    is_beyondmimic_.store(false);
     if(use_interrupt_){
         std::fill(interrupt_action_.begin(), interrupt_action_.end(), 0.0f);
     }

@@ -146,11 +146,18 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (use_interrupt_ || use_beyondmimic_) {
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
-            if(use_interrupt_){
+            if(!is_running_){
+                RCLCPP_WARN(this->get_logger(), "Inference is not running!");
+            }
+            else if(use_interrupt_){
+                is_running_.store(false);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_interrupt_.store(!is_interrupt_.load());
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                is_running_.store(true);
                 RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
             }
-            if(use_beyondmimic_){
+            else if(use_beyondmimic_){
                 is_running_.store(false);
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_beyondmimic_.store(!is_beyondmimic_.load());
@@ -170,6 +177,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
                 std::fill(act_.begin(), act_.end(), 0.0f);
                 std::fill(last_act_.begin(), last_act_.end(), 0.0f);
+                std::fill(joint_torques_.begin(), joint_torques_.end(), 0.0f);
                 is_first_frame_ = true;
                 motion_frame_ = 0;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));

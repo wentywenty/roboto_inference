@@ -156,7 +156,7 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
     }
 
     exec_motors_parallel([this, &joint_default_angle](std::shared_ptr<MotorDriver>& motor, int idx) {
-        motor->motor_mit_cmd(joint_default_angle[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx]/2.0f, robot_cfg_->kd_[idx]/2.0f, 0.0f);
+        motor->motor_mit_cmd(joint_default_angle[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx]/2.5f, robot_cfg_->kd_[idx], 0.0f);
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     exec_motors_parallel([this, &joint_default_angle](std::shared_ptr<MotorDriver>& motor, int idx) {
