@@ -52,4 +52,4 @@ inference_node:
              -3.14, 3.14,
              -3.14, 3.14,
              -3.14, 3.14]
-        gravity_z_upper: -0.7
+        gravity_z_upper: -0.3

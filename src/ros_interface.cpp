@@ -32,6 +32,7 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("clip_cmd", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("joint_limits", std::vector<double>{});
+    this->declare_parameter<float>("gravity_z_upper", -0.5);
 
 
     this->get_parameter("model_name", model_name_);
@@ -65,6 +66,7 @@ void InferenceNode::load_config() {
     this->get_parameter("clip_cmd", clip_cmd_);
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("joint_limits", joint_limits_);
+    this->get_parameter("gravity_z_upper", gravity_z_upper_);
 
 
     model_path_ = std::string(ROOT_DIR) + "models/" + model_name_;
@@ -96,6 +98,7 @@ void InferenceNode::load_config() {
     print_vector<double>("clip_cmd", clip_cmd_);
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("joint_limits", joint_limits_);
+    RCLCPP_INFO(this->get_logger(), "gravity_z_upper: %f", gravity_z_upper_);
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
@@ -146,15 +149,11 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (use_interrupt_ || use_beyondmimic_) {
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
-            if(!is_running_){
-                RCLCPP_WARN(this->get_logger(), "Inference is not running!");
-            }
-            else if(use_interrupt_){
+            if(use_interrupt_){
                 is_running_.store(false);
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_interrupt_.store(!is_interrupt_.load());
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                is_running_.store(true);
                 RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
             }
             else if(use_beyondmimic_){
@@ -181,7 +180,6 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 is_first_frame_ = true;
                 motion_frame_ = 0;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                is_running_.store(true);
                 RCLCPP_INFO(this->get_logger(), "Beyondmimic mode %s", is_beyondmimic ? "enabled" : "disabled");
             }
         }
