@@ -283,6 +283,9 @@ int main(int argc, char **argv) {
         RCLCPP_INFO(node->get_logger(), "Press 'X' to reset motors");
         RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause inference");
         RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between joystick and /cmd_vel control");
+        if (node->use_interrupt_ || node->use_beyondmimic_){
+            RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode");
+        }
         executor.spin();
     } catch (const std::exception &e) {
         RCLCPP_FATAL(rclcpp::get_logger("main"), "Exception caught: %s", e.what());

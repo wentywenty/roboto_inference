@@ -151,6 +151,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
             if(use_interrupt_){
                 is_running_.store(false);
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_interrupt_.store(!is_interrupt_.load());
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -158,6 +159,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             }
             else if(use_beyondmimic_){
                 is_running_.store(false);
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_beyondmimic_.store(!is_beyondmimic_.load());
                 bool is_beyondmimic = is_beyondmimic_.load();
