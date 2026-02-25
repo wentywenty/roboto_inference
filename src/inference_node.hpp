@@ -146,12 +146,12 @@ class InferenceNode : public rclcpp::Node {
         size_t num_inputs;
         size_t num_outputs;
     };
+    bool use_interrupt_, use_beyondmimic_, use_attn_enc_;
    private:
     std::shared_ptr<RobotInterface> robot_;
     int offline_threshold_ = 10;
     std::atomic<bool> is_running_{false}, is_joy_control_{true}, is_interrupt_{false}, is_beyondmimic_{false};
     std::string model_name_, model_path_, motion_name_, motion_path_, motion_model_name_, motion_model_path_, perception_obs_topic_;
-    bool use_interrupt_, use_beyondmimic_, use_attn_enc_;
     int obs_num_, motion_obs_num_, perception_obs_num_, frame_stack_, motion_frame_stack_, joint_num_;
     int decimation_;
     std::unique_ptr<Ort::Env> env_;
