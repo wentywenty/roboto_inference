@@ -107,12 +107,20 @@ void InferenceNode::control() {
     pthread_setname_np(pthread_self(), "control");
     struct sched_param sp{}; sp.sched_priority = 70;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to set realtime priority for control thread");
+        RCLCPP_FATAL(this->get_logger(), "Failed to set realtime priority for control thread");
+        rclcpp::shutdown();
+        return;
     }
     auto period = std::chrono::microseconds(static_cast<long long>(dt_ * 1000000));
     while(rclcpp::ok()){
         auto loop_start = std::chrono::steady_clock::now();
-        apply_action();
+        try {
+            apply_action();
+        } catch (const std::exception& e) {
+            RCLCPP_FATAL(this->get_logger(), "Exception in control thread: %s", e.what());
+            rclcpp::shutdown();
+            return;
+        }
         auto loop_end = std::chrono::steady_clock::now();
         auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(loop_end - loop_start);
         auto sleep_time = period - elapsed_time;
@@ -126,7 +134,9 @@ void InferenceNode::inference() {
     pthread_setname_np(pthread_self(), "inference");
     struct sched_param sp{}; sp.sched_priority = 70;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        throw std::runtime_error("Failed to set realtime priority for inference thread");
+        RCLCPP_FATAL(this->get_logger(), "Failed to set realtime priority for inference thread");
+        rclcpp::shutdown();
+        return;
     }
     auto period = std::chrono::microseconds(static_cast<long long>(dt_ * 1000 * 1000 * decimation_));
 
@@ -137,118 +147,124 @@ void InferenceNode::inference() {
             continue;
         }
 
-        int offset = 0;
+        try {
+            int offset = 0;
 
-        if(is_beyondmimic_.load()){
-            motion_pos_ = motion_loader_->get_pos(motion_frame_);
-            motion_vel_ = motion_loader_->get_vel(motion_frame_);
-            motion_frame_ += 1;
-            if(motion_frame_ >= motion_loader_->get_num_frames()){
-                motion_frame_ = motion_loader_->get_num_frames() - 1;
+            if(is_beyondmimic_.load()){
+                motion_pos_ = motion_loader_->get_pos(motion_frame_);
+                motion_vel_ = motion_loader_->get_vel(motion_frame_);
+                motion_frame_ += 1;
+                if(motion_frame_ >= motion_loader_->get_num_frames()){
+                    motion_frame_ = motion_loader_->get_num_frames() - 1;
+                }
+                for(int i = 0; i < joint_num_; i++){
+                    obs_[i + offset] = motion_pos_[i];
+                    obs_[i + joint_num_ + offset] = motion_vel_[i];
+                }
+                offset += joint_num_ * 2;
             }
-            for(int i = 0; i < joint_num_; i++){
-                obs_[i + offset] = motion_pos_[i];
-                obs_[i + joint_num_ + offset] = motion_vel_[i];
+
+            read_imu();
+            for (int i = 0; i < 3; i++) {
+                obs_[i + offset] = ang_vel_[i] * obs_scales_ang_vel_;
             }
-            offset += joint_num_ * 2;
-        }
-
-        read_imu();
-        for (int i = 0; i < 3; i++) {
-            obs_[i + offset] = ang_vel_[i] * obs_scales_ang_vel_;
-        }
-        offset += 3;
-        Eigen::Quaternionf q_b2w(quat_[0], quat_[1], quat_[2], quat_[3]);
-        Eigen::Vector3f gravity_w(0.0f, 0.0f, -1.0f);
-        Eigen::Quaternionf q_w2b = q_b2w.inverse();
-        Eigen::Vector3f gravity_b = q_w2b * gravity_w;
-        if (gravity_b.z() > gravity_z_upper_){
-            RCLCPP_FATAL(this->get_logger(), "Robot fell down! Shutting down...");
-            rclcpp::shutdown();
-            return;
-        }
-        obs_[0 + offset] = gravity_b.x() * obs_scales_gravity_b_;
-        obs_[1 + offset] = gravity_b.y() * obs_scales_gravity_b_;
-        obs_[2 + offset] = gravity_b.z() * obs_scales_gravity_b_;
-        offset += 3;
-        publish_imu();
-
-        if (!is_beyondmimic_.load()){
-            std::unique_lock<std::mutex> lock(cmd_mutex_);
-            obs_[0 + offset] = cmd_vel_[0] * obs_scales_lin_vel_;
-            obs_[1 + offset] = cmd_vel_[1] * obs_scales_lin_vel_;
-            obs_[2 + offset] = cmd_vel_[2] * obs_scales_ang_vel_;
             offset += 3;
-        }
-
-        read_joints();
-        for (int i = 0; i < joint_num_; i++) {
-            obs_[offset + i] = (joint_pos_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
-            obs_[offset + joint_num_ + i] = joint_vel_[usd2urdf_[i]] * obs_scales_dof_vel_;
-        }
-        for(size_t i = 0; i < joint_limits_.size() / 2; i++){
-            if(joint_pos_[i] < joint_limits_[i * 2] || joint_pos_[i] > joint_limits_[i * 2 + 1]){
-                RCLCPP_FATAL(this->get_logger(), "Joint %ld out of limit! Shutting down...", i+1);
+            Eigen::Quaternionf q_b2w(quat_[0], quat_[1], quat_[2], quat_[3]);
+            Eigen::Vector3f gravity_w(0.0f, 0.0f, -1.0f);
+            Eigen::Quaternionf q_w2b = q_b2w.inverse();
+            Eigen::Vector3f gravity_b = q_w2b * gravity_w;
+            if (gravity_b.z() > gravity_z_upper_){
+                RCLCPP_FATAL(this->get_logger(), "Robot fell down! Shutting down...");
                 rclcpp::shutdown();
                 return;
             }
-        }
-        offset += joint_num_ * 2;
-        publish_joint_states();
+            obs_[0 + offset] = gravity_b.x() * obs_scales_gravity_b_;
+            obs_[1 + offset] = gravity_b.y() * obs_scales_gravity_b_;
+            obs_[2 + offset] = gravity_b.z() * obs_scales_gravity_b_;
+            offset += 3;
+            publish_imu();
 
-        for (int i = 0; i < joint_num_; i++) {
-            obs_[offset + i] = active_ctx_->output_buffer[i];
-        }
-        offset += joint_num_;
-
-        if (use_interrupt_){
-            obs_[offset] = is_interrupt_.load() ? 1.0 : 0.0;
-            offset += 1;
-        }
-
-        std::transform(obs_.begin(), obs_.end(), obs_.begin(), [this](float val) {
-            return std::clamp(val, -clip_observations_, clip_observations_);
-        });
-
-        bool is_beyondmimic = is_beyondmimic_.load();
-        int obs_num = is_beyondmimic ? motion_obs_num_: obs_num_;
-        int frame_stack = is_beyondmimic ? motion_frame_stack_ : frame_stack_;
-        if (is_first_frame_) {
-            for (int i = 0; i < frame_stack; i++) {
-                std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + i * obs_num);
+            if (!is_beyondmimic_.load()){
+                std::unique_lock<std::mutex> lock(cmd_mutex_);
+                obs_[0 + offset] = cmd_vel_[0] * obs_scales_lin_vel_;
+                obs_[1 + offset] = cmd_vel_[1] * obs_scales_lin_vel_;
+                obs_[2 + offset] = cmd_vel_[2] * obs_scales_ang_vel_;
+                offset += 3;
             }
-            if(use_attn_enc_){
-                std::unique_lock<std::mutex> lock(perception_mutex_);
-                std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
-            }
-            is_first_frame_ = false;
-        } else {
-            std::copy(active_ctx_->input_buffer.begin() + obs_num, active_ctx_->input_buffer.begin() + frame_stack * obs_num, active_ctx_->input_buffer.begin());
-            std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + (frame_stack - 1) * obs_num);
-            if(use_attn_enc_){
-                std::unique_lock<std::mutex> lock(perception_mutex_);
-                std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
-            }
-        }
 
-        active_ctx_->session->Run(Ort::RunOptions{nullptr}, 
-            active_ctx_->input_names_raw.data(), active_ctx_->input_tensor.get(), active_ctx_->num_inputs,
-            active_ctx_->output_names_raw.data(), active_ctx_->output_tensor.get(), active_ctx_->num_outputs);
-        
-        {
-            std::unique_lock<std::mutex> lock(act_mutex_);
-            for (int i = 0; i < active_ctx_->output_buffer.size(); i++) {
-                active_ctx_->output_buffer[i] = std::clamp(active_ctx_->output_buffer[i], -clip_actions_, clip_actions_);
-                act_[usd2urdf_[i]] = active_ctx_->output_buffer[i];
-                act_[usd2urdf_[i]] = act_[usd2urdf_[i]] * action_scale_ + joint_default_angle_[usd2urdf_[i]];
+            read_joints();
+            for (int i = 0; i < joint_num_; i++) {
+                obs_[offset + i] = (joint_pos_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
+                obs_[offset + joint_num_ + i] = joint_vel_[usd2urdf_[i]] * obs_scales_dof_vel_;
             }
-            if(use_interrupt_ && is_interrupt_.load()){
-                std::unique_lock<std::mutex> lock(interrupt_mutex_);
-                for (size_t i = 0; i < 10; i++) {
-                    act_[14 + i] = interrupt_action_[i];
+            for(size_t i = 0; i < joint_limits_.size() / 2; i++){
+                if(joint_pos_[i] < joint_limits_[i * 2] || joint_pos_[i] > joint_limits_[i * 2 + 1]){
+                    RCLCPP_FATAL(this->get_logger(), "Joint %zu out of limit! Shutting down...", i+1);
+                    rclcpp::shutdown();
+                    return;
                 }
             }
-            publish_action();
+            offset += joint_num_ * 2;
+            publish_joint_states();
+
+            for (int i = 0; i < joint_num_; i++) {
+                obs_[offset + i] = active_ctx_->output_buffer[i];
+            }
+            offset += joint_num_;
+
+            if (use_interrupt_){
+                obs_[offset] = is_interrupt_.load() ? 1.0 : 0.0;
+                offset += 1;
+            }
+
+            std::transform(obs_.begin(), obs_.end(), obs_.begin(), [this](float val) {
+                return std::clamp(val, -clip_observations_, clip_observations_);
+            });
+
+            bool is_beyondmimic = is_beyondmimic_.load();
+            int obs_num = is_beyondmimic ? motion_obs_num_: obs_num_;
+            int frame_stack = is_beyondmimic ? motion_frame_stack_ : frame_stack_;
+            if (is_first_frame_) {
+                for (int i = 0; i < frame_stack; i++) {
+                    std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + i * obs_num);
+                }
+                if(use_attn_enc_){
+                    std::unique_lock<std::mutex> lock(perception_mutex_);
+                    std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
+                }
+                is_first_frame_ = false;
+            } else {
+                std::copy(active_ctx_->input_buffer.begin() + obs_num, active_ctx_->input_buffer.begin() + frame_stack * obs_num, active_ctx_->input_buffer.begin());
+                std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + (frame_stack - 1) * obs_num);
+                if(use_attn_enc_){
+                    std::unique_lock<std::mutex> lock(perception_mutex_);
+                    std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
+                }
+            }
+
+            active_ctx_->session->Run(Ort::RunOptions{nullptr}, 
+                active_ctx_->input_names_raw.data(), active_ctx_->input_tensor.get(), active_ctx_->num_inputs,
+                active_ctx_->output_names_raw.data(), active_ctx_->output_tensor.get(), active_ctx_->num_outputs);
+
+            {
+                std::unique_lock<std::mutex> lock(act_mutex_);
+                for (int i = 0; i < active_ctx_->output_buffer.size(); i++) {
+                    active_ctx_->output_buffer[i] = std::clamp(active_ctx_->output_buffer[i], -clip_actions_, clip_actions_);
+                    act_[usd2urdf_[i]] = active_ctx_->output_buffer[i];
+                    act_[usd2urdf_[i]] = act_[usd2urdf_[i]] * action_scale_ + joint_default_angle_[usd2urdf_[i]];
+                }
+                if(use_interrupt_ && is_interrupt_.load()){
+                    std::unique_lock<std::mutex> lock(interrupt_mutex_);
+                    for (size_t i = 0; i < 10; i++) {
+                        act_[14 + i] = interrupt_action_[i];
+                    }
+                }
+                publish_action();
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_FATAL(this->get_logger(), "Exception in inference thread: %s", e.what());
+            rclcpp::shutdown();
+            return;
         }
 
         auto loop_end = std::chrono::steady_clock::now();
@@ -260,23 +276,26 @@ void InferenceNode::inference() {
             std::this_thread::sleep_for(sleep_time);
         } else {
             // 警告信息也使用更精确的单位
-            RCLCPP_WARN(this->get_logger(), "Inference loop overran! Took %ld us, but period is %ld us.", elapsed_time.count(), period.count());
+            RCLCPP_WARN(this->get_logger(), "Inference loop overran! Took %lld us, but period is %lld us.", static_cast<long long>(elapsed_time.count()), static_cast<long long>(period.count()));
         }
     }
 }
 
 int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
     if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
         RCLCPP_WARN(rclcpp::get_logger("main"), "mlockall failed.");
     }
     pthread_setname_np(pthread_self(), "main");
     struct sched_param sp{}; sp.sched_priority = 50;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        throw std::runtime_error("Failed to set realtime priority for main thread");
+        RCLCPP_FATAL(rclcpp::get_logger("main"), "Failed to set realtime priority for main thread");
+        rclcpp::shutdown();
+        return 1;
     }
-    rclcpp::init(argc, argv);
+    std::shared_ptr<InferenceNode> node;
     try {
-        auto node = std::make_shared<InferenceNode>();
+        node = std::make_shared<InferenceNode>();
         rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
         executor.add_node(node);
         RCLCPP_INFO(node->get_logger(), "Press 'A' to initialize/deinitialize motors");
@@ -291,5 +310,6 @@ int main(int argc, char **argv) {
         RCLCPP_FATAL(rclcpp::get_logger("main"), "Exception caught: %s", e.what());
     }
     rclcpp::shutdown();
+    node.reset();
     return 0;
 }

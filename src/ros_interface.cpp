@@ -133,7 +133,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             RCLCPP_INFO(this->get_logger(), "Inference paused");
         }
         if (!robot_->is_init_.load()){
-            RCLCPP_WARN(this->get_logger(), "Motors are not initialized!");
+            RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
         } else {
             robot_->reset_joints(joint_default_angle_);
             RCLCPP_INFO(this->get_logger(), "Motors reset");
@@ -393,25 +393,21 @@ void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trig
 }
 
 void InferenceNode::publish_joint_states() {
-    auto msg = sensor_msgs::msg::JointState();
-    msg.header.stamp = this->now();
+    joint_state_msg_.header.stamp = this->now();
     for (int i = 0; i < joint_num_; i++) {
-        msg.name.push_back("joint_" + std::to_string(i+1));
-        msg.position.push_back(joint_pos_[i]);
-        msg.velocity.push_back(joint_vel_[i]);
-        msg.effort.push_back(joint_torques_[i]);
+        joint_state_msg_.position[i] = joint_pos_[i];
+        joint_state_msg_.velocity[i] = joint_vel_[i];
+        joint_state_msg_.effort[i] = joint_torques_[i];
     }
-    joint_state_publisher_->publish(msg);
+    joint_state_publisher_->publish(joint_state_msg_);
 }
 
 void InferenceNode::publish_action() {
-    auto msg = sensor_msgs::msg::JointState();
-    msg.header.stamp = this->now();
+    action_msg_.header.stamp = this->now();
     for (int i = 0; i < joint_num_; i++) {
-        msg.name.push_back("action_" + std::to_string(i+1));
-        msg.position.push_back(act_[i]);
+        action_msg_.position[i] = act_[i];
     }
-    action_publisher_->publish(msg);
+    action_publisher_->publish(action_msg_);
 }
 
 void InferenceNode::publish_imu() {

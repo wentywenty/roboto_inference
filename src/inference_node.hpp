@@ -49,12 +49,7 @@ class InferenceNode : public rclcpp::Node {
         active_ctx_ = normal_ctx_.get();
 
         if(use_beyondmimic_){
-            try{
-                motion_loader_ = std::make_unique<MotionLoader>(motion_path_);
-            } catch (const std::exception& e) {
-                std::cerr << "Error: " << e.what() << std::endl;
-                exit(1);
-            }
+            motion_loader_ = std::make_unique<MotionLoader>(motion_path_);
         }
 
         obs_ = std::vector<float>(obs_num_, 0.0);
@@ -68,6 +63,17 @@ class InferenceNode : public rclcpp::Node {
         act_ = std::vector<float>(joint_num_, 0.0);
         last_act_ = std::vector<float>(joint_num_, 0.0);
         joint_torques_ = std::vector<float>(joint_num_, 0.0);
+        
+        joint_state_msg_.name.resize(joint_num_);
+        joint_state_msg_.position.resize(joint_num_, 0.0);
+        joint_state_msg_.velocity.resize(joint_num_, 0.0);
+        joint_state_msg_.effort.resize(joint_num_, 0.0);
+        action_msg_.name.resize(joint_num_);
+        action_msg_.position.resize(joint_num_, 0.0);
+        for (int i = 0; i < joint_num_; i++) {
+            joint_state_msg_.name[i] = "joint_" + std::to_string(i+1);
+            action_msg_.name[i] = "action_" + std::to_string(i+1);
+        }
         if (use_interrupt_){
             interrupt_action_ = std::vector<float>(10, 0.0);
         }
@@ -185,6 +191,7 @@ class InferenceNode : public rclcpp::Node {
 
     std::mutex act_mutex_, perception_mutex_, interrupt_mutex_, cmd_mutex_;
     std::vector<float> obs_, act_, last_act_, perception_obs_, motion_pos_, motion_vel_, joint_pos_, joint_vel_, cmd_vel_, quat_, ang_vel_, interrupt_action_, joint_torques_;
+    sensor_msgs::msg::JointState joint_state_msg_, action_msg_;
 
     void subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg);
     void subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg);
