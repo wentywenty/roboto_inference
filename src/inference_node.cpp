@@ -76,8 +76,10 @@ void InferenceNode::reset() {
         std::fill(motion_ctx_->input_buffer.begin(), motion_ctx_->input_buffer.end(), 0.0f);
         std::fill(motion_ctx_->output_buffer.begin(), motion_ctx_->output_buffer.end(), 0.0f);
     }
-    std::fill(act_.begin(), act_.end(), 0.0f);
-    std::fill(last_act_.begin(), last_act_.end(), 0.0f);
+    for (int i = 0; i < joint_num_; i++) {
+        act_[i] = joint_default_angle_[i];
+        last_act_[i] = joint_default_angle_[i];
+    }
     std::fill(joint_torques_.begin(), joint_torques_.end(), 0.0f);
     is_first_frame_ = true;
     motion_frame_ = 0;
@@ -96,11 +98,10 @@ void InferenceNode::apply_action() {
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
         for (size_t i = 0; i < act_.size(); i++) {
-            act_[i] = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
+            last_act_[i] = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
         }
-        last_act_ = act_;
-        robot_->apply_action(act_);
     }
+    robot_->apply_action(last_act_);
 }
 
 void InferenceNode::control() {

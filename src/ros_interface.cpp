@@ -167,18 +167,10 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 int obs_num = is_beyondmimic ? motion_obs_num_ : obs_num_;
                 obs_.resize(obs_num);
                 std::fill(obs_.begin(), obs_.end(), 0.0f);
-                std::fill(joint_pos_.begin(), joint_pos_.end(), 0.0f);
-                std::fill(joint_vel_.begin(), joint_vel_.end(), 0.0f);
                 std::fill(motion_pos_.begin(), motion_pos_.end(), 0.0f);
                 std::fill(motion_vel_.begin(), motion_vel_.end(), 0.0f);
-                std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
-                std::fill(quat_.begin(), quat_.end(), 0.0f);
-                std::fill(ang_vel_.begin(), ang_vel_.end(), 0.0f);
                 std::fill(active_ctx_->input_buffer.begin(), active_ctx_->input_buffer.end(), 0.0f);
                 std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
-                std::fill(act_.begin(), act_.end(), 0.0f);
-                std::fill(last_act_.begin(), last_act_.end(), 0.0f);
-                std::fill(joint_torques_.begin(), joint_torques_.end(), 0.0f);
                 is_first_frame_ = true;
                 motion_frame_ = 0;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
