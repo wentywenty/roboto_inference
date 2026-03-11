@@ -149,17 +149,28 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (use_interrupt_ || use_beyondmimic_) {
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
+            bool restore_flag = false;
             if(use_interrupt_){
-                is_running_.store(false);
-                RCLCPP_INFO(this->get_logger(), "Inference paused");
+                if (is_running_.load()){
+                    restore_flag = true;
+                    is_running_.store(false);
+                    RCLCPP_INFO(this->get_logger(), "Inference paused");
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_interrupt_.store(!is_interrupt_.load());
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
+                if (restore_flag){
+                    is_running_.store(true);
+                    RCLCPP_INFO(this->get_logger(), "Inference started");
+                }
             }
             else if(use_beyondmimic_){
-                is_running_.store(false);
-                RCLCPP_INFO(this->get_logger(), "Inference paused");
+                if (is_running_.load()){
+                    restore_flag = true;
+                    is_running_.store(false);
+                    RCLCPP_INFO(this->get_logger(), "Inference paused");
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_beyondmimic_.store(!is_beyondmimic_.load());
                 bool is_beyondmimic = is_beyondmimic_.load();
@@ -175,6 +186,10 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 motion_frame_ = 0;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 RCLCPP_INFO(this->get_logger(), "Beyondmimic mode %s", is_beyondmimic ? "enabled" : "disabled");
+                if (restore_flag){
+                    is_running_.store(true);
+                    RCLCPP_INFO(this->get_logger(), "Inference started");
+                }
             }
         }
         last_button4_ = msg->buttons[4];
