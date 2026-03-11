@@ -169,6 +169,11 @@ void RobotInterface::refresh_joints() {
         std::unique_lock<std::mutex> lock(joint_mutex_);
         exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
             motor->refresh_motor_status();
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
             joint_q_[idx] = motor->get_motor_pos() * robot_cfg_->motor_sign_[idx];
             joint_vel_[idx] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
             joint_tau_[idx] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
