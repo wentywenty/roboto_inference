@@ -40,8 +40,8 @@ class RobotInterface {
         std::vector<double> motor_zero_offset_;
     };
     struct RobotCfg{
-        std::vector<long int> close_chain_motor_id_, motor_sign_;
-        std::vector<double> kp_, kd_;
+        std::vector<long int> close_chain_motor_id_, motor_sign_, urdf2motor_;
+        std::vector<double> kp_, kd_, extrinsic_R_;
     };
 
     void apply_action(std::vector<float> action);
@@ -72,17 +72,27 @@ class RobotInterface {
         std::unique_lock<std::mutex> lock(joint_mutex_);
         return joint_tau_;
     }
-    std::vector<float> get_quat() {
+    const std::vector<float>& get_quat() {
         if (!imu_) {
             throw std::runtime_error("IMU not initialized");
         }
-        return imu_->get_quat();
+        auto raw = imu_->get_quat();  // w, x, y, z
+        q_body_ = Eigen::Quaternionf(raw[0], raw[1], raw[2], raw[3]) * extrinsic_q_inv_;
+        q_body_.normalize();
+        quat_buf_[0] = q_body_.w();
+        quat_buf_[1] = q_body_.x();
+        quat_buf_[2] = q_body_.y(); 
+        quat_buf_[3] = q_body_.z();
+        return quat_buf_;
     }
-    std::vector<float> get_ang_vel() {
+    const std::vector<float>& get_ang_vel() {
         if (!imu_) {
             throw std::runtime_error("IMU not initialized");
         }
-        return imu_->get_ang_vel();
+        auto raw = imu_->get_ang_vel();  // in IMU frame
+        Eigen::Map<const Eigen::Vector3f> omega_imu(raw.data());
+        Eigen::Map<Eigen::Vector3f>(ang_vel_buf_.data()) = extrinsic_R_mat_ * omega_imu;
+        return ang_vel_buf_;
     }
 
     std::atomic<bool> is_init_{false};
@@ -94,15 +104,20 @@ class RobotInterface {
     int offline_threshold_ = 25;
     std::shared_ptr<IMUDriver> imu_;
     std::shared_ptr<Decouple> ankle_decouple_;
+    Eigen::Matrix3f extrinsic_R_mat_ = Eigen::Matrix3f::Identity();
+    Eigen::Quaternionf extrinsic_q_inv_ = Eigen::Quaternionf::Identity();
+    Eigen::Quaternionf q_body_;
+    std::vector<float> quat_buf_{0.f, 0.f, 0.f, 0.f};
+    std::vector<float> ang_vel_buf_{0.f, 0.f, 0.f};
     std::vector<std::shared_ptr<MotorDriver>> motors_;
     std::unique_ptr<ThreadPool> thread_pool_;
 
     std::mutex motors_mutex_, joint_mutex_;
-    std::vector<float> joint_q_, joint_vel_, joint_tau_;
-    std::vector<int> close_chain_motor_idx_;
+    std::vector<float> joint_q_, joint_vel_, joint_tau_, motor_target_;
+    std::vector<int> close_chain_motor_idx_, close_chain_joint_idx_, motor2urdf_;
 
     void setup_motors();
     void setup_imu();
 
-    void exec_motors_parallel(std::function<void(std::shared_ptr<MotorDriver>&, int)> cmd_func);
+    void exec_motors_parallel(const std::function<void(std::shared_ptr<MotorDriver>&, int)>& cmd_func);
 };
