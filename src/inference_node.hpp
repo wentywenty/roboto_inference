@@ -44,12 +44,17 @@ class InferenceNode : public rclcpp::Node {
             setup_model(normal_ctx_, model_path_, obs_num_ * frame_stack_);
         }
         if(use_beyondmimic_){
-             setup_model(motion_ctx_, motion_model_path_, motion_obs_num_ * motion_frame_stack_);
+            for (size_t i = 0; i < motion_model_paths_.size(); i++) {
+                motion_ctxs_.push_back(nullptr);
+                setup_model(motion_ctxs_.back(), motion_model_paths_[i], motion_obs_num_ * motion_frame_stack_);
+            }
         }
         active_ctx_ = normal_ctx_.get();
 
         if(use_beyondmimic_){
-            motion_loader_ = std::make_unique<MotionLoader>(motion_path_);
+            for (size_t i = 0; i < motion_paths_.size(); i++) {
+                motion_loaders_.push_back(std::make_shared<MotionLoader>(motion_paths_[i]));
+            }
         }
 
         obs_ = std::vector<float>(obs_num_, 0.0);
@@ -157,7 +162,9 @@ class InferenceNode : public rclcpp::Node {
     std::shared_ptr<RobotInterface> robot_;
     int offline_threshold_ = 10;
     std::atomic<bool> is_running_{false}, is_joy_control_{true}, is_interrupt_{false}, is_beyondmimic_{false};
-    std::string model_name_, model_path_, motion_name_, motion_path_, motion_model_name_, motion_model_path_, perception_obs_topic_;
+    std::string model_name_, model_path_, perception_obs_topic_;
+    std::vector<std::string> motion_names_, motion_model_names_, motion_paths_, motion_model_paths_;
+    int current_motion_idx_ = 0;
     int obs_num_, motion_obs_num_, perception_obs_num_, frame_stack_, motion_frame_stack_, joint_num_;
     int decimation_;
     std::unique_ptr<Ort::Env> env_;
@@ -181,11 +188,12 @@ class InferenceNode : public rclcpp::Node {
     std::vector<long int> usd2urdf_;
     bool is_first_frame_;
     float gravity_z_upper_;
-    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0;
-    std::shared_ptr<MotionLoader> motion_loader_;
+    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0;
+    std::vector<std::shared_ptr<MotionLoader>> motion_loaders_;
     size_t motion_frame_ = 0;
     std::vector<const char *> input_names_raw_, output_names_raw_;
-    std::unique_ptr<ModelContext> normal_ctx_, motion_ctx_;
+    std::unique_ptr<ModelContext> normal_ctx_;
+    std::vector<std::unique_ptr<ModelContext>> motion_ctxs_;
     ModelContext* active_ctx_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
 

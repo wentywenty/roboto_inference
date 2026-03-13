@@ -72,9 +72,11 @@ void InferenceNode::reset() {
         std::fill(normal_ctx_->input_buffer.begin(), normal_ctx_->input_buffer.end(), 0.0f);
         std::fill(normal_ctx_->output_buffer.begin(), normal_ctx_->output_buffer.end(), 0.0f);
     }
-    if (motion_ctx_) {
-        std::fill(motion_ctx_->input_buffer.begin(), motion_ctx_->input_buffer.end(), 0.0f);
-        std::fill(motion_ctx_->output_buffer.begin(), motion_ctx_->output_buffer.end(), 0.0f);
+    for (auto& ctx : motion_ctxs_) {
+        if (ctx) {
+            std::fill(ctx->input_buffer.begin(), ctx->input_buffer.end(), 0.0f);
+            std::fill(ctx->output_buffer.begin(), ctx->output_buffer.end(), 0.0f);
+        }
     }
     for (int i = 0; i < joint_num_; i++) {
         act_[i] = joint_default_angle_[i];
@@ -152,11 +154,12 @@ void InferenceNode::inference() {
             int offset = 0;
 
             if(is_beyondmimic_.load()){
-                motion_pos_ = motion_loader_->get_pos(motion_frame_);
-                motion_vel_ = motion_loader_->get_vel(motion_frame_);
+                int idx = current_motion_idx_;
+                motion_pos_ = motion_loaders_[idx]->get_pos(motion_frame_);
+                motion_vel_ = motion_loaders_[idx]->get_vel(motion_frame_);
                 motion_frame_ += 1;
-                if(motion_frame_ >= motion_loader_->get_num_frames()){
-                    motion_frame_ = motion_loader_->get_num_frames() - 1;
+                if(motion_frame_ >= motion_loaders_[idx]->get_num_frames()){
+                    motion_frame_ = motion_loaders_[idx]->get_num_frames() - 1;
                 }
                 for(int i = 0; i < joint_num_; i++){
                     obs_[i + offset] = motion_pos_[i];
@@ -305,6 +308,9 @@ int main(int argc, char **argv) {
         RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between joystick and /cmd_vel control");
         if (node->use_interrupt_ || node->use_beyondmimic_){
             RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode");
+        }
+        if (node->use_beyondmimic_){
+            RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence");
         }
         executor.spin();
     } catch (const std::exception &e) {

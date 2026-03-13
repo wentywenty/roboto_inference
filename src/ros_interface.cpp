@@ -2,8 +2,8 @@
 
 void InferenceNode::load_config() {
     this->declare_parameter<std::string>("model_name", "1.onnx");
-    this->declare_parameter<std::string>("motion_name", "motion.npz");
-    this->declare_parameter<std::string>("motion_model_name", "1.onnx");
+    this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{"motion.npz"});
+    this->declare_parameter<std::vector<std::string>>("motion_model_names", std::vector<std::string>{"1.onnx"});
     this->declare_parameter<float>("act_alpha", 0.9);
     this->declare_parameter<float>("gyro_alpha", 0.9);
     this->declare_parameter<float>("angle_alpha", 0.9);
@@ -36,8 +36,8 @@ void InferenceNode::load_config() {
 
 
     this->get_parameter("model_name", model_name_);
-    this->get_parameter("motion_name", motion_name_);
-    this->get_parameter("motion_model_name", motion_model_name_);
+    this->get_parameter("motion_names", motion_names_);
+    this->get_parameter("motion_model_names", motion_model_names_);
     this->get_parameter("act_alpha", act_alpha_);
     this->get_parameter("gyro_alpha", gyro_alpha_);
     this->get_parameter("angle_alpha", angle_alpha_);
@@ -70,11 +70,15 @@ void InferenceNode::load_config() {
 
 
     model_path_ = std::string(ROOT_DIR) + "models/" + model_name_;
-    motion_path_ = std::string(ROOT_DIR) + "motions/" + motion_name_;
-    motion_model_path_ = std::string(ROOT_DIR) + "models/" + motion_model_name_;
+    for(size_t i = 0; i < motion_names_.size(); i++){
+        motion_paths_.push_back(std::string(ROOT_DIR) + "motions/" + motion_names_[i]);
+        motion_model_paths_.push_back(std::string(ROOT_DIR) + "models/" + motion_model_names_[i]);
+    }
     RCLCPP_INFO(this->get_logger(), "model_path: %s", model_path_.c_str());
-    RCLCPP_INFO(this->get_logger(), "motion_path: %s", motion_path_.c_str());
-    RCLCPP_INFO(this->get_logger(), "motion_model_path: %s", motion_model_path_.c_str());
+    for(size_t i = 0; i < motion_names_.size(); i++) {
+        RCLCPP_INFO(this->get_logger(), "motion_path %zu: %s", i, motion_paths_[i].c_str());
+        RCLCPP_INFO(this->get_logger(), "motion_model_path %zu: %s", i, motion_model_paths_[i].c_str());
+    }
     RCLCPP_INFO(this->get_logger(), "act_alpha: %f", act_alpha_);
     RCLCPP_INFO(this->get_logger(), "gyro_alpha: %f", gyro_alpha_);
     RCLCPP_INFO(this->get_logger(), "angle_alpha: %f", angle_alpha_);
@@ -150,7 +154,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     if (use_interrupt_ || use_beyondmimic_) {
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
             bool restore_flag = false;
-            if(use_interrupt_){
+            if (use_interrupt_) {
                 if (is_running_.load()){
                     restore_flag = true;
                     is_running_.store(false);
@@ -164,8 +168,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                     is_running_.store(true);
                     RCLCPP_INFO(this->get_logger(), "Inference started");
                 }
-            }
-            else if(use_beyondmimic_){
+            } else if (use_beyondmimic_) {
                 if (is_running_.load()){
                     restore_flag = true;
                     is_running_.store(false);
@@ -174,7 +177,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 is_beyondmimic_.store(!is_beyondmimic_.load());
                 bool is_beyondmimic = is_beyondmimic_.load();
-                active_ctx_ = is_beyondmimic ? motion_ctx_.get() : normal_ctx_.get();
+                active_ctx_ = is_beyondmimic ? motion_ctxs_[current_motion_idx_].get() : normal_ctx_.get();
                 int obs_num = is_beyondmimic ? motion_obs_num_ : obs_num_;
                 obs_.resize(obs_num);
                 std::fill(obs_.begin(), obs_.end(), 0.0f);
@@ -185,7 +188,11 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 is_first_frame_ = true;
                 motion_frame_ = 0;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                RCLCPP_INFO(this->get_logger(), "Beyondmimic mode %s", is_beyondmimic ? "enabled" : "disabled");
+                if (is_beyondmimic) {
+                    RCLCPP_INFO(this->get_logger(), "Beyondmimic mode enabled: %s", motion_names_[current_motion_idx_].c_str());
+                } else {
+                    RCLCPP_INFO(this->get_logger(), "Beyondmimic mode disabled");
+                }
                 if (restore_flag){
                     is_running_.store(true);
                     RCLCPP_INFO(this->get_logger(), "Inference started");
@@ -193,6 +200,17 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             }
         }
         last_button4_ = msg->buttons[4];
+    }
+    if (use_beyondmimic_) {
+        if (msg->buttons[5] == 1 && msg->buttons[5] != last_button5_) {
+            if (is_beyondmimic_.load()) {
+                RCLCPP_WARN(this->get_logger(), "Cannot switch motion sequence while in beyondmimic mode");
+            } else {
+                current_motion_idx_ = (current_motion_idx_ + 1) % motion_names_.size();
+                RCLCPP_INFO(this->get_logger(), "Selected motion: %s", motion_names_[current_motion_idx_].c_str());
+            }
+        }
+        last_button5_ = msg->buttons[5];
     }
     last_button0_ = msg->buttons[0];
     last_button1_ = msg->buttons[1];
