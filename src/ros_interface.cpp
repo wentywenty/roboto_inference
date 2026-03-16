@@ -108,17 +108,17 @@ void InferenceNode::load_config() {
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        cmd_vel_[0] = std::clamp(msg->axes[3] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
-        cmd_vel_[1] = std::clamp(msg->axes[2] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
-            if (msg->buttons[6] == 1) {
-            cmd_vel_[2] = std::clamp(msg->buttons[6] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
-            } else if (msg->buttons[7] == 1) {
-            cmd_vel_[2] = std::clamp(-msg->buttons[7] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+        cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
+        cmd_vel_[1] = std::clamp(msg->axes[3] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
+            if (msg->axes[2] < 0) {
+            cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+            } else if (msg->axes[5] < 0) {
+            cmd_vel_[2] = std::clamp(msg->axes[5] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else {
             cmd_vel_[2] = 0.0;
         }
     }
-    if ((msg->buttons[0] == 1 && msg->buttons[0] != last_button0_)) {
+    if ((msg->buttons[2] == 1 && msg->buttons[2] != last_button0_)) {
         if(is_running_.load()){
             reset();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
@@ -131,7 +131,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             RCLCPP_INFO(this->get_logger(), "Motors initialized");
         }
     }
-    if (msg->buttons[1] == 1 && msg->buttons[1] != last_button1_) {
+    if (msg->buttons[0] == 1 && msg->buttons[0] != last_button1_) {
         if (is_running_.load()){
             reset();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
@@ -143,7 +143,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             RCLCPP_INFO(this->get_logger(), "Motors reset");
         }
     }
-    if (msg->buttons[2] == 1 && msg->buttons[2] != last_button2_) {
+    if (msg->buttons[1] == 1 && msg->buttons[1] != last_button2_) {
         is_running_.store(!is_running_.load());
         RCLCPP_INFO(this->get_logger(), "Inference %s", is_running_.load() ? "started" : "paused");
     }
@@ -212,9 +212,9 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
         last_button5_ = msg->buttons[5];
     }
-    last_button0_ = msg->buttons[0];
-    last_button1_ = msg->buttons[1];
-    last_button2_ = msg->buttons[2];
+    last_button0_ = msg->buttons[2];
+    last_button1_ = msg->buttons[0];
+    last_button2_ = msg->buttons[1];
     last_button3_ = msg->buttons[3];
 }
 
