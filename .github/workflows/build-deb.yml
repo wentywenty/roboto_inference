@@ -55,7 +55,7 @@ jobs:
           echo ">>> Downloading latest ARM64 releases..."
           # Note: Assuming repositories have *arm64.deb releases
           
-          gh release download --repo wentywenty/roboto_base   --pattern "*arm64.deb" || echo "Failed roboto_base"
+          gh release download --repo wentywenty/roboto_base   --pattern "*all.deb" || echo "Failed roboto_base"
           gh release download --repo wentywenty/roboto_imu    --pattern "*arm64.deb" || echo "Failed roboto_imu"
           gh release download --repo wentywenty/roboto_motors --pattern "*arm64.deb" || echo "Failed roboto_motors"
           gh release download --repo wentywenty/roboto_bms    --pattern "*arm64.deb" || echo "Failed roboto_bms"
