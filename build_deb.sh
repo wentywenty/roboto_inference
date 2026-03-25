@@ -1,75 +1,77 @@
 #!/bin/bash
 # Build roboto-inference Debian package
 # Requires ROS 2 (rclcpp, sensor_msgs, geometry_msgs, std_srvs)
-# Requires roboto-motors and roboto-imu installed to /opt/roboparty
+# Requires roboto-motors/imu/bms installed to /opt/roboparty
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="${WORKSPACE}/build_deb/roboto-inference"
-OUTPUT_DIR="${WORKSPACE}/deb_output"
 
 PACKAGE="roboto-inference"
 VERSION="1.0.1"
 ARCH="$(dpkg --print-architecture)"
 PREFIX="/opt/roboparty"
+DEB_DIR="${PACKAGE}_${VERSION}_${ARCH}"
 
-# Source ROS 2 (required)
-ROS_SOURCED=false
+# Source ROS 2 (Always required for inference)
+ROS_SOURCED=0
 for distro in jazzy iron humble rolling; do
     if [ -f "/opt/ros/${distro}/setup.bash" ]; then
         echo ">>> Sourcing ROS 2 ${distro}"
         source "/opt/ros/${distro}/setup.bash"
-        ROS_SOURCED=true
+        ROS_SOURCED=1
         break
     fi
 done
 
-if ! $ROS_SOURCED; then
+if [ "$ROS_SOURCED" = "0" ]; then
     echo "ERROR: ROS 2 is required to build ${PACKAGE}."
     exit 1
 fi
 
-echo ">>> Building ${PACKAGE} ${VERSION}"
-mkdir -p "${OUTPUT_DIR}"
-rm -rf "${BUILD_DIR}"
-mkdir -p "${BUILD_DIR}"
-
-# cmake build + DESTDIR install
-cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}/cmake" \
+echo ">>> Starting compilation..."
+rm -rf build && mkdir -p build
+pushd build > /dev/null
+cmake .. \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_PREFIX_PATH="${PREFIX}" \
     -DCMAKE_BUILD_TYPE=Release
-cmake --build "${BUILD_DIR}/cmake" -j"$(nproc)"
-DESTDIR="${BUILD_DIR}/destdir" cmake --install "${BUILD_DIR}/cmake"
+make -j"$(nproc)"
+DESTDIR="${SCRIPT_DIR}/build/destdir" cmake --install .
+popd > /dev/null
 
-# Stage deb
-PKG_STAGE="${BUILD_DIR}/${PACKAGE}_${VERSION}_${ARCH}"
-mkdir -p "${PKG_STAGE}/DEBIAN"
+echo ">>> Preparing Debian package structure..."
+rm -rf "${DEB_DIR}" "${DEB_DIR}.deb"
+mkdir -p "${DEB_DIR}/DEBIAN"
 
-if [ -d "${BUILD_DIR}/destdir${PREFIX}" ]; then
-    mkdir -p "${PKG_STAGE}${PREFIX}"
-    cp -a "${BUILD_DIR}/destdir${PREFIX}/." "${PKG_STAGE}${PREFIX}/"
+# Copy cmake installed files
+if [ -d "build/destdir${PREFIX}" ]; then
+    mkdir -p "${DEB_DIR}${PREFIX}"
+    cp -a "build/destdir${PREFIX}/." "${DEB_DIR}${PREFIX}/"
 fi
 
 # Install models and motions (not handled by cmake install)
-if [ -d "${SCRIPT_DIR}/models" ]; then
-    mkdir -p "${PKG_STAGE}${PREFIX}/share/inference/models"
-    cp "${SCRIPT_DIR}/models/"*.onnx "${PKG_STAGE}${PREFIX}/share/inference/models/" 2>/dev/null || true
+if [ -d "models" ]; then
+    mkdir -p "${DEB_DIR}${PREFIX}/share/inference/models"
+    cp models/*.onnx "${DEB_DIR}${PREFIX}/share/inference/models/" 2>/dev/null || true
 fi
 
-if [ -d "${SCRIPT_DIR}/motions" ]; then
-    mkdir -p "${PKG_STAGE}${PREFIX}/share/inference/motions"
-    cp "${SCRIPT_DIR}/motions/"*.npz "${PKG_STAGE}${PREFIX}/share/inference/motions/" 2>/dev/null || true
+if [ -d "motions" ]; then
+    mkdir -p "${DEB_DIR}${PREFIX}/share/inference/motions"
+    cp motions/*.npz "${DEB_DIR}${PREFIX}/share/inference/motions/" 2>/dev/null || true
 fi
 
-cp "${SCRIPT_DIR}/debian/control"  "${PKG_STAGE}/DEBIAN/"
-cp "${SCRIPT_DIR}/debian/postinst" "${PKG_STAGE}/DEBIAN/"
-cp "${SCRIPT_DIR}/debian/postrm"   "${PKG_STAGE}/DEBIAN/"
-[ -f "${SCRIPT_DIR}/debian/conffiles" ] && cp "${SCRIPT_DIR}/debian/conffiles" "${PKG_STAGE}/DEBIAN/"
-sed -i "s/ARCH_PLACEHOLDER/${ARCH}/" "${PKG_STAGE}/DEBIAN/control"
-sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" "${PKG_STAGE}/DEBIAN/control"
-chmod 755 "${PKG_STAGE}/DEBIAN/postinst" "${PKG_STAGE}/DEBIAN/postrm"
+# Copy DEBIAN maintainer scripts
+cp debian/control  "${DEB_DIR}/DEBIAN/"
+cp debian/postinst "${DEB_DIR}/DEBIAN/"
+cp debian/postrm   "${DEB_DIR}/DEBIAN/"
+[ -f debian/conffiles ] && cp debian/conffiles "${DEB_DIR}/DEBIAN/"
+chmod 755 "${DEB_DIR}/DEBIAN/postinst" "${DEB_DIR}/DEBIAN/postrm"
 
-dpkg-deb --root-owner-group --build "${PKG_STAGE}" "${OUTPUT_DIR}/"
-echo ">>> Done: ${OUTPUT_DIR}/${PACKAGE}_${VERSION}_${ARCH}.deb"
+# Generate Control file (Replace placeholders)
+sed -i "s/ARCH_PLACEHOLDER/${ARCH}/" "${DEB_DIR}/DEBIAN/control"
+sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" "${DEB_DIR}/DEBIAN/control"
+
+echo ">>> Executing dpkg-deb build..."
+dpkg-deb --root-owner-group --build "${DEB_DIR}"
+
+echo ">>> Success! Generated ${DEB_DIR}.deb"
