@@ -21,9 +21,71 @@ find_package(Boost COMPONENTS system)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-find_package(roboto_motors REQUIRED)
-find_package(roboto_imu REQUIRED)
-find_package(roboto_bms REQUIRED)
+
+# --- roboto_motors ---
+find_package(roboto_motors QUIET)
+if (NOT roboto_motors_FOUND)
+  message(WARNING "roboto_motors ROS config not found, falling back to manual library search...")
+  find_path(ROBOTO_MOTORS_INCLUDE_DIR NAMES motor_driver.hpp PATHS /opt/roboparty/include NO_DEFAULT_PATH)
+  
+  find_library(LIB_MOTORS          NAMES motors          PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(LIB_MOTORS_PROTOCOL NAMES motors_protocol PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(LIB_DM_MOTORS       NAMES dm_motors       PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(LIB_EVO_MOTORS      NAMES evo_motors      PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  
+  if (ROBOTO_MOTORS_INCLUDE_DIR AND LIB_MOTORS AND LIB_MOTORS_PROTOCOL AND LIB_DM_MOTORS AND LIB_EVO_MOTORS)
+    message(STATUS "Found roboto_motors manually.")
+    add_library(roboto_motors::roboto_motors INTERFACE IMPORTED)
+    target_include_directories(roboto_motors::roboto_motors INTERFACE ${ROBOTO_MOTORS_INCLUDE_DIR})
+    target_link_libraries(roboto_motors::roboto_motors INTERFACE 
+        ${LIB_MOTORS} ${LIB_MOTORS_PROTOCOL} ${LIB_DM_MOTORS} ${LIB_EVO_MOTORS})
+    set(roboto_motors_FOUND TRUE)
+  else()
+    message(FATAL_ERROR "Could not find roboto_motors (checked ROS config and manual paths)")
+  endif()
+endif()
+
+# --- roboto_imu ---
+find_package(roboto_imu QUIET)
+if (NOT roboto_imu_FOUND)
+  message(WARNING "roboto_imu ROS config not found, falling back to manual library search...")
+  find_path(ROBOTO_IMU_INCLUDE_DIR NAMES imu_driver.hpp PATHS /opt/roboparty/include NO_DEFAULT_PATH)
+  
+  find_library(LIB_IMU             NAMES imu             PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(LIB_IMU_PROTOCOL    NAMES imu_protocol    PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(LIB_HIPNUC_IMU      NAMES hipnuc_imu      PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  
+  if (ROBOTO_IMU_INCLUDE_DIR AND LIB_IMU AND LIB_IMU_PROTOCOL AND LIB_HIPNUC_IMU)
+    message(STATUS "Found roboto_imu manually.")
+    add_library(roboto_imu::roboto_imu INTERFACE IMPORTED)
+    target_include_directories(roboto_imu::roboto_imu INTERFACE ${ROBOTO_IMU_INCLUDE_DIR})
+    target_link_libraries(roboto_imu::roboto_imu INTERFACE 
+        ${LIB_IMU} ${LIB_IMU_PROTOCOL} ${LIB_HIPNUC_IMU})
+    set(roboto_imu_FOUND TRUE)
+  else()
+    message(FATAL_ERROR "Could not find roboto_imu (checked ROS config and manual paths)")
+  endif()
+endif()
+
+# --- roboto_bms ---
+find_package(roboto_bms QUIET)
+if (NOT roboto_bms_FOUND)
+  message(WARNING "roboto_bms ROS config not found, falling back to manual library search...")
+  find_path(ROBOTO_BMS_INCLUDE_DIR NAMES bms/bms_driver.hpp PATHS /opt/roboparty/include NO_DEFAULT_PATH)
+  find_library(ROBOTO_BMS_LIB NAMES bms PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  find_library(ROBOTO_TWS_BMS_LIB NAMES tws_bms PATHS /opt/roboparty/lib NO_DEFAULT_PATH)
+  
+  if (ROBOTO_BMS_INCLUDE_DIR AND ROBOTO_BMS_LIB AND ROBOTO_TWS_BMS_LIB)
+    message(STATUS "Found roboto_bms manually: ${ROBOTO_BMS_LIB}")
+    add_library(roboto_bms::roboto_bms INTERFACE IMPORTED)
+    target_include_directories(roboto_bms::roboto_bms INTERFACE ${ROBOTO_BMS_INCLUDE_DIR})
+    target_link_libraries(roboto_bms::roboto_bms INTERFACE ${ROBOTO_BMS_LIB} ${ROBOTO_TWS_BMS_LIB})
+    set(roboto_bms_FOUND TRUE)
+  else()
+    message(FATAL_ERROR "Could not find roboto_bms (checked ROS config and manual paths)")
+  endif()
+endif()
+
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 
@@ -63,7 +125,27 @@ target_include_directories(robot
 )
 
 target_link_libraries(robot PUBLIC ${PUBLIC_DEPENDENCIES} utils)
-ament_target_dependencies(robot PUBLIC roboto_imu roboto_motors roboto_bms)
+
+# Link Motors
+if(TARGET roboto_motors::roboto_motors)
+  target_link_libraries(robot PUBLIC roboto_motors::roboto_motors)
+else()
+  ament_target_dependencies(robot PUBLIC roboto_motors)
+endif()
+
+# Link IMU
+if(TARGET roboto_imu::roboto_imu)
+  target_link_libraries(robot PUBLIC roboto_imu::roboto_imu)
+else()
+  ament_target_dependencies(robot PUBLIC roboto_imu)
+endif()
+
+# Link BMS
+if(TARGET roboto_bms::roboto_bms)
+  target_link_libraries(robot PUBLIC roboto_bms::roboto_bms)
+else()
+  ament_target_dependencies(robot PUBLIC roboto_bms)
+endif()
 
 pybind11_add_module(robot_py src/pybind_module.cpp)
 target_link_libraries(robot_py PUBLIC robot)

@@ -22,12 +22,25 @@ jobs:
         with:
           required-ros-distributions: humble
 
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: apt-cache
+          key: ${{ runner.os }}-arm64-apt-${{ hashFiles('.github/workflows/build-deb.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-apt-
+
       - name: Install System Dependencies
         run: |
+          mkdir -p apt-cache/partial
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            -o dir::cache::archives="$PWD/apt-cache" \
             build-essential cmake git wget python3-pip python3-vcstool \
             libboost-all-dev libspdlog-dev libfmt-dev python3-dev gh
+          
+          # Fix permissions for cache saving
+          sudo chown -R $(id -u):$(id -g) apt-cache
             
           # Install pybind11 which is required by CMakeLists.txt
           pip3 install pybind11
@@ -42,10 +55,10 @@ jobs:
           echo ">>> Downloading latest ARM64 releases..."
           # Note: Assuming repositories have *arm64.deb releases
           
-          gh release download --repo RoboParty/roboto_base   --pattern "*arm64.deb" || echo "Failed roboto_base"
-          gh release download --repo RoboParty/roboto_imu    --pattern "*arm64.deb" || echo "Failed roboto_imu"
-          gh release download --repo RoboParty/roboto_motors --pattern "*arm64.deb" || echo "Failed roboto_motors"
-          gh release download --repo RoboParty/roboto_bms    --pattern "*arm64.deb" || echo "Failed roboto_bms"
+          gh release download --repo wentywenty/roboto_base   --pattern "*arm64.deb" || echo "Failed roboto_base"
+          gh release download --repo wentywenty/roboto_imu    --pattern "*arm64.deb" || echo "Failed roboto_imu"
+          gh release download --repo wentywenty/roboto_motors --pattern "*arm64.deb" || echo "Failed roboto_motors"
+          gh release download --repo wentywenty/roboto_bms    --pattern "*arm64.deb" || echo "Failed roboto_bms"
           
           ls -lh
 
