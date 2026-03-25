@@ -10,7 +10,7 @@ BUILD_DIR="${WORKSPACE}/build_deb/roboto-inference"
 OUTPUT_DIR="${WORKSPACE}/deb_output"
 
 PACKAGE="roboto-inference"
-VERSION="1.0.0"
+VERSION="1.0.1"
 ARCH="$(dpkg --print-architecture)"
 PREFIX="/opt/roboparty"
 
@@ -68,6 +68,7 @@ cp "${SCRIPT_DIR}/debian/postinst" "${PKG_STAGE}/DEBIAN/"
 cp "${SCRIPT_DIR}/debian/postrm"   "${PKG_STAGE}/DEBIAN/"
 [ -f "${SCRIPT_DIR}/debian/conffiles" ] && cp "${SCRIPT_DIR}/debian/conffiles" "${PKG_STAGE}/DEBIAN/"
 sed -i "s/ARCH_PLACEHOLDER/${ARCH}/" "${PKG_STAGE}/DEBIAN/control"
+sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" "${PKG_STAGE}/DEBIAN/control"
 chmod 755 "${PKG_STAGE}/DEBIAN/postinst" "${PKG_STAGE}/DEBIAN/postrm"
 
 dpkg-deb --root-owner-group --build "${PKG_STAGE}" "${OUTPUT_DIR}/"

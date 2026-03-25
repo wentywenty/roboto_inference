@@ -1,10 +1,10 @@
 Package: roboto-inference
-Version: 1.0.0
+Version: VERSION_PLACEHOLDER
 Section: misc
 Priority: optional
 Architecture: ARCH_PLACEHOLDER
-Depends: roboto-base (>= 1.0.0), roboto-motors (>= 1.0.0), roboto-imu (>= 1.0.0)
-Maintainer: RoboParty <2321901849@qq.com>
+Depends: roboto-base (>= 1.0.0), roboto-motors (>= 1.2.0), roboto-imu (>= 1.1.1), roboto-bms (>= 1.2.1)
+Maintainer: RoboParty <ZhihaoLiu_hit@163.com>
 Description: RoboParty inference node
  ROS 2 humanoid robot control node with ONNX Runtime policy inference.
  Includes ONNX models, motion data, config files, launch scripts
