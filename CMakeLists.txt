@@ -21,8 +21,9 @@ find_package(Boost COMPONENTS system)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-find_package(motors REQUIRED)
-find_package(imu REQUIRED)
+find_package(roboto_motors REQUIRED)
+find_package(roboto_imu REQUIRED)
+find_package(roboto_bms REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 
@@ -62,7 +63,7 @@ target_include_directories(robot
 )
 
 target_link_libraries(robot PUBLIC ${PUBLIC_DEPENDENCIES} utils)
-ament_target_dependencies(robot PUBLIC imu motors)
+ament_target_dependencies(robot PUBLIC roboto_imu roboto_motors roboto_bms)
 
 pybind11_add_module(robot_py src/pybind_module.cpp)
 target_link_libraries(robot_py PUBLIC robot)

@@ -1,0 +1,68 @@
+name: Build roboto-inference Debian Package (Native ARM64)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build_arm64:
+    runs-on: ubuntu-22.04-arm
+    name: Build on Native ARM64
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup ROS 2 Humble
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: humble
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git wget python3-pip python3-vcstool \
+            libboost-all-dev libspdlog-dev libfmt-dev python3-dev gh
+            
+          # Install pybind11 which is required by CMakeLists.txt
+          pip3 install pybind11
+
+      - name: Download Dependencies (Releases)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p debs
+          cd debs
+          
+          echo ">>> Downloading latest ARM64 releases..."
+          # Note: Assuming repositories have *arm64.deb releases
+          
+          gh release download --repo RoboParty/roboto_base   --pattern "*arm64.deb" || echo "Failed roboto_base"
+          gh release download --repo RoboParty/roboto_imu    --pattern "*arm64.deb" || echo "Failed roboto_imu"
+          gh release download --repo RoboParty/roboto_motors --pattern "*arm64.deb" || echo "Failed roboto_motors"
+          gh release download --repo RoboParty/roboto_bms    --pattern "*arm64.deb" || echo "Failed roboto_bms"
+          
+          ls -lh
+
+      - name: Install Dependencies
+        run: |
+          cd debs && sudo apt-get install -y ./*.deb || echo "Warning: apt-get install returned error, attempting fix-broken"
+          sudo apt-get install -f -y
+
+      - name: Build roboto-inference Debian Package
+        run: |
+          chmod +x build_deb.sh
+          # Source ROS 2 explicitly to be safe
+          . /opt/ros/humble/setup.sh
+          ./build_deb.sh
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roboto-inference-arm64-deb
+          path: deb_output/*.deb
