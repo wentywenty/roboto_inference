@@ -239,7 +239,7 @@ void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg:
 void InferenceNode::subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg){
     if(use_interrupt_ && is_interrupt_.load()){
         std::unique_lock<std::mutex> lock(interrupt_mutex_);
-        for(size_t i = 0; i < 10; i++){
+        for(size_t i = 0; i < interrupt_action_.size(); i++){
             interrupt_action_[i] = msg->position[i];
         }
     }

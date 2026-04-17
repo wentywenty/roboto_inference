@@ -259,8 +259,8 @@ void InferenceNode::inference() {
                 }
                 if(use_interrupt_ && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
-                    for (size_t i = 0; i < 10; i++) {
-                        act_[14 + i] = interrupt_action_[i];
+                    for (size_t i = 0; i < interrupt_action_.size(); i++) {
+                        act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];
                     }
                 }
                 publish_action();
