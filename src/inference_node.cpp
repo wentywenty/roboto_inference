@@ -302,8 +302,8 @@ int main(int argc, char **argv) {
         node = std::make_shared<InferenceNode>();
         rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
         executor.add_node(node);
-        RCLCPP_INFO(node->get_logger(), "Press 'A' to initialize/deinitialize motors");
-        RCLCPP_INFO(node->get_logger(), "Press 'X' to reset motors");
+        RCLCPP_INFO(node->get_logger(), "Press 'X' to initialize/deinitialize motors");
+        RCLCPP_INFO(node->get_logger(), "Press 'A' to reset motors");
         RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause inference");
         RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between Gamepad Control / cmd_vel Control");
         if (node->use_interrupt_ || node->use_beyondmimic_){
