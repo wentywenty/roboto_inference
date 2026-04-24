@@ -83,8 +83,21 @@ void RobotInterface::setup_motors(){
     size_t count = 0;
     motors_.resize(motors_cfg_->motor_id_.size());
     for (size_t i = 0; i < motors_cfg_->motor_interface_.size(); ++i){
+        std::string current_bus_brand;
+        if (motors_cfg_->control_mode_ == "MIX") {
+            current_bus_brand = (i < 2) ? "LRO" : "EVO";
+        } else {
+            current_bus_brand = motors_cfg_->motor_type_;
+        }
+        std::shared_ptr<CanfdGroupManager> current_bus_manager = nullptr;
+        if (motors_cfg_->motor_interface_type_ == "canfd" && motors_cfg_->motor_type_ != "DM") {
+            uint32_t group_id = MotorDriver::get_group_can_id(current_bus_brand);
+            current_bus_manager = std::make_shared<CanfdGroupManager>( MotorsSocketCANFD::get(motors_cfg_->motor_interface_[i]), group_id);
+        }
+        canfd_group_managers_.push_back(current_bus_manager);
         for (size_t j = 0; j < motors_cfg_->motor_num_[i]; ++j){
             motors_[count] = MotorDriver::create_motor(motors_cfg_->motor_id_[count], motors_cfg_->motor_interface_type_, motors_cfg_->motor_interface_[i], motors_cfg_->motor_type_, motors_cfg_->motor_model_[count], motors_cfg_->master_id_offset_, motors_cfg_->motor_zero_offset_[count]);
+            if (current_bus_manager) { current_bus_manager->add_motor(motors_[count]); }
             count += 1;
         }
     }
@@ -281,11 +294,12 @@ void RobotInterface::exec_motors_parallel(const std::function<void(std::shared_p
     for (size_t i = 0; i < motors_cfg_->motor_interface_.size(); ++i) {
         size_t num_motors = motors_cfg_->motor_num_[i];
         size_t start_idx = count;
-        tasks.push_back([this, start_idx, num_motors, cmd_func]() {
+        tasks.push_back([this, start_idx, num_motors, cmd_func ,i]() {
             for (size_t j = 0; j < num_motors; ++j) {
                 size_t idx = start_idx + j;
                 cmd_func(motors_[idx], idx); 
             }
+            if (canfd_group_managers_[i] != nullptr) { canfd_group_managers_[i]->sync_transmit(); }
         });
         count += num_motors;
     }
