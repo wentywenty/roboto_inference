@@ -259,8 +259,8 @@ void InferenceNode::inference() {
                 }
                 if(use_interrupt_ && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
-                    for (size_t i = 0; i < 10; i++) {
-                        act_[14 + i] = interrupt_action_[i];
+                    for (size_t i = 0; i < interrupt_action_.size(); i++) {
+                        act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];
                     }
                 }
                 publish_action();
@@ -302,16 +302,18 @@ int main(int argc, char **argv) {
         node = std::make_shared<InferenceNode>();
         rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
         executor.add_node(node);
-        RCLCPP_INFO(node->get_logger(), "Press 'A' to initialize/deinitialize motors");
-        RCLCPP_INFO(node->get_logger(), "Press 'X' to reset motors");
+        RCLCPP_INFO(node->get_logger(), "Press 'X' to initialize/deinitialize motors");
+        RCLCPP_INFO(node->get_logger(), "Press 'A' to reset motors");
         RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause inference");
-        RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between joystick and /cmd_vel control");
+        RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between Gamepad Control / cmd_vel Control");
         if (node->use_interrupt_ || node->use_beyondmimic_){
-            RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode");
+            RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode (available in beyondmimic / interrupt modes)");
         }
         if (node->use_beyondmimic_){
-            RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence");
+            RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence (available in beyondmimic mode)");
         }
+        RCLCPP_INFO(node->get_logger(), "Right Stick: Control forward, backward, left and right movement");
+        RCLCPP_INFO(node->get_logger(), "LT/RT: Control turning (left / right rotation)");
         executor.spin();
     } catch (const std::exception &e) {
         RCLCPP_FATAL(rclcpp::get_logger("main"), "Exception caught: %s", e.what());
