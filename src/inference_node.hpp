@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <algorithm>
 #include <memory>
+#include <stdexcept>
 #include <Eigen/Geometry>
 #include <cmath>
 #include <chrono>
@@ -26,6 +27,30 @@
 #include <std_srvs/srv/trigger.hpp>
 #include "robot_interface.hpp"
 
+enum class ObsStackOrder {
+    FrameMajor,
+    ObsMajor,
+};
+
+enum class ObsSourceId {
+    MotionPos,
+    MotionVel,
+    AngVel,
+    GravityB,
+    CmdVel,
+    DofPos,
+    DofVel,
+    LastAction,
+    Interrupt,
+    Perception,
+};
+
+struct ObsSourceSpec {
+    std::string name;
+    ObsSourceId source;
+    int size;
+};
+
 class InferenceNode : public rclcpp::Node {
    public:
     InferenceNode() : Node("inference_node") {
@@ -39,7 +64,7 @@ class InferenceNode : public rclcpp::Node {
         }
         env_ = std::make_unique<Ort::Env>(thread_opts, ORT_LOGGING_LEVEL_WARNING, "ONNXRuntimeInference");
         if(use_attn_enc_){
-            setup_model(normal_ctx_, model_path_, obs_num_ * frame_stack_ + perception_obs_num_);
+            setup_model(normal_ctx_, model_path_, obs_num_ * frame_stack_ + extra_obs_num_);
         } else {
             setup_model(normal_ctx_, model_path_, obs_num_ * frame_stack_);
         }
@@ -54,20 +79,19 @@ class InferenceNode : public rclcpp::Node {
         if(use_beyondmimic_){
             for (size_t i = 0; i < motion_paths_.size(); i++) {
                 motion_loaders_.push_back(std::make_shared<MotionLoader>(motion_paths_[i]));
+                if (motion_loaders_.back()->get_num_frames() == 0) {
+                    throw std::runtime_error("Motion file has no frames: " + motion_paths_[i]);
+                }
+                if (motion_loaders_.back()->get_num_joints() != static_cast<size_t>(joint_num_)) {
+                    throw std::runtime_error("Motion joint count mismatch: " + motion_paths_[i]);
+                }
             }
         }
 
         obs_ = std::vector<float>(obs_num_, 0.0);
-        joint_pos_ = std::vector<float>(joint_num_, 0.0);
-        joint_vel_ = std::vector<float>(joint_num_, 0.0);
-        motion_pos_ = std::vector<float>(joint_num_, 0.0);
-        motion_vel_ = std::vector<float>(joint_num_, 0.0);
         cmd_vel_ = std::vector<float>(3, 0.0);
-        quat_ = std::vector<float>(4, 0.0);
-        ang_vel_ = std::vector<float>(3, 0.0);
         act_ = std::vector<float>(joint_num_, 0.0);
         last_act_ = std::vector<float>(joint_num_, 0.0);
-        joint_torques_ = std::vector<float>(joint_num_, 0.0);
         
         joint_state_msg_.name.resize(joint_num_);
         joint_state_msg_.position.resize(joint_num_, 0.0);
@@ -82,9 +106,24 @@ class InferenceNode : public rclcpp::Node {
         if (use_interrupt_){
             interrupt_action_ = std::vector<float>(10, 0.0);
         }
-        if (use_attn_enc_){
-            perception_obs_ = std::vector<float>(perception_obs_num_, 0.0);
+        obs_segments_.resize(obs_layout_.size());
+        for (size_t i = 0; i < obs_layout_.size(); i++) {
+            obs_segments_[i].resize(obs_layout_[i].size, 0.0f);
         }
+        motion_obs_segments_.resize(motion_obs_layout_.size());
+        for (size_t i = 0; i < motion_obs_layout_.size(); i++) {
+            motion_obs_segments_[i].resize(motion_obs_layout_[i].size, 0.0f);
+        }
+        extra_obs_segments_.resize(extra_obs_layout_.size());
+        for (size_t i = 0; i < extra_obs_layout_.size(); i++) {
+            extra_obs_segments_[i].resize(extra_obs_layout_[i].size, 0.0f);
+        }
+        perception_obs_buffer_.resize(extra_obs_num_, 0.0f);
+        joint_pos_buffer_.resize(joint_num_, 0.0f);
+        joint_vel_buffer_.resize(joint_num_, 0.0f);
+        joint_torques_buffer_.resize(joint_num_, 0.0f);
+        quat_buffer_.resize(4, 0.0f);
+        ang_vel_buffer_.resize(3, 0.0f);
         reset();
 
         auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
@@ -161,10 +200,15 @@ class InferenceNode : public rclcpp::Node {
    private:
     std::shared_ptr<RobotInterface> robot_;
     std::atomic<bool> is_running_{false}, is_joy_control_{true}, is_interrupt_{false}, is_beyondmimic_{false};
-    std::string model_name_, model_path_, perception_obs_topic_;
+    std::string model_name_, model_path_, perception_obs_topic_, obs_stack_order_name_, motion_obs_stack_order_name_;
     std::vector<std::string> motion_names_, motion_model_names_, motion_paths_, motion_model_paths_;
     int current_motion_idx_ = 0;
-    int obs_num_, motion_obs_num_, perception_obs_num_, frame_stack_, motion_frame_stack_, joint_num_;
+    int obs_num_, motion_obs_num_, extra_obs_num_, frame_stack_, motion_frame_stack_, joint_num_;
+    ObsStackOrder obs_stack_order_ = ObsStackOrder::FrameMajor;
+    ObsStackOrder motion_obs_stack_order_ = ObsStackOrder::FrameMajor;
+    std::vector<std::string> obs_layout_specs_, motion_obs_layout_specs_, extra_obs_layout_specs_;
+    std::vector<ObsSourceSpec> obs_layout_, motion_obs_layout_, extra_obs_layout_;
+    std::vector<int> obs_layout_sizes_, motion_obs_layout_sizes_, extra_obs_layout_sizes_;
     int decimation_;
     std::unique_ptr<Ort::Env> env_;
     int intra_threads_;
@@ -190,14 +234,15 @@ class InferenceNode : public rclcpp::Node {
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0;
     std::vector<std::shared_ptr<MotionLoader>> motion_loaders_;
     size_t motion_frame_ = 0;
-    std::vector<const char *> input_names_raw_, output_names_raw_;
     std::unique_ptr<ModelContext> normal_ctx_;
     std::vector<std::unique_ptr<ModelContext>> motion_ctxs_;
     ModelContext* active_ctx_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
 
-    std::mutex act_mutex_, perception_mutex_, interrupt_mutex_, cmd_mutex_;
-    std::vector<float> obs_, act_, last_act_, perception_obs_, motion_pos_, motion_vel_, joint_pos_, joint_vel_, cmd_vel_, quat_, ang_vel_, interrupt_action_, joint_torques_;
+    std::mutex act_mutex_, perception_mutex_, interrupt_mutex_, cmd_mutex_, mode_mutex_;
+    std::vector<float> obs_, act_, last_act_, cmd_vel_, interrupt_action_, perception_obs_buffer_;
+    std::vector<std::vector<float>> obs_segments_, motion_obs_segments_, extra_obs_segments_;
+    std::vector<float> joint_pos_buffer_, joint_vel_buffer_, joint_torques_buffer_, quat_buffer_, ang_vel_buffer_;
     sensor_msgs::msg::JointState joint_state_msg_, action_msg_;
 
     void subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg);
@@ -207,18 +252,31 @@ class InferenceNode : public rclcpp::Node {
     void inference();
     void control();
     void apply_action();
-    void read_joints() {
-        joint_pos_ = robot_->get_joint_q();
-        joint_vel_ = robot_->get_joint_vel();
-        joint_torques_ = robot_->get_joint_tau();
-    }
-    void read_imu() {
-        ang_vel_ = robot_->get_ang_vel();
-        quat_ = robot_->get_quat();
-    }
+    void update_obs_segments(std::vector<std::vector<float>>& segments, const std::vector<ObsSourceSpec>& layout);
+    void flatten_obs_segments(const std::vector<std::vector<float>>& segments, const std::vector<int>& layout_sizes,
+                              std::vector<float>::iterator output_begin);
+    void step_motion_frame();
+    void get_motion_pos_obs(std::vector<float>& segment);
+    void get_motion_vel_obs(std::vector<float>& segment);
+    void get_ang_vel_obs(std::vector<float>& segment);
+    void get_gravity_b_obs(std::vector<float>& segment);
+    void get_cmd_vel_obs(std::vector<float>& segment);
+    void get_dof_pos_obs(std::vector<float>& segment);
+    void get_dof_vel_obs(std::vector<float>& segment);
+    void get_last_action_obs(std::vector<float>& segment);
+    void get_interrupt_obs(std::vector<float>& segment);
+    void get_perception_obs(std::vector<float>& segment);
     void reset();
     void load_config();
     void setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size);
+    ObsStackOrder parse_obs_stack_order(const std::string& stack_order_name);
+    std::vector<ObsSourceSpec> parse_obs_layout(const std::vector<std::string>& layout_specs,
+                                                const std::string& layout_name);
+    int obs_layout_size(const std::vector<ObsSourceSpec>& layout) const;
+    std::vector<int> obs_layout_sizes(const std::vector<ObsSourceSpec>& layout) const;
+    void update_stacked_obs(std::vector<float>& input_buffer, const std::vector<float>& obs,
+                            int obs_num, int frame_stack, ObsStackOrder stack_order,
+                            const std::vector<int>& field_sizes, bool is_first_frame);
     void init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                          std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,

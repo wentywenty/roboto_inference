@@ -1,5 +1,53 @@
 #include "inference_node.hpp"
 
+ObsStackOrder InferenceNode::parse_obs_stack_order(const std::string& stack_order_name) {
+    if (stack_order_name == "frame_major") {
+        return ObsStackOrder::FrameMajor;
+    }
+    if (stack_order_name == "obs_major") {
+        return ObsStackOrder::ObsMajor;
+    }
+    throw std::runtime_error("Unsupported obs stack order: " + stack_order_name);
+}
+
+void InferenceNode::update_stacked_obs(std::vector<float>& input_buffer, const std::vector<float>& obs,
+                                       int obs_num, int frame_stack, ObsStackOrder stack_order,
+                                       const std::vector<int>& field_sizes, bool is_first_frame) {
+    if (stack_order == ObsStackOrder::FrameMajor) {
+        if (is_first_frame) {
+            for (int frame = 0; frame < frame_stack; frame++) {
+                std::copy(obs.begin(), obs.end(), input_buffer.begin() + frame * obs_num);
+            }
+        } else {
+            std::move(input_buffer.begin() + obs_num,
+                      input_buffer.begin() + frame_stack * obs_num,
+                      input_buffer.begin());
+            std::copy(obs.begin(), obs.end(), input_buffer.begin() + (frame_stack - 1) * obs_num);
+        }
+        return;
+    }
+
+    int input_offset = 0;
+    int obs_offset = 0;
+
+    for (const int field_size : field_sizes) {
+        if (is_first_frame) {
+            for (int frame = 0; frame < frame_stack; frame++) {
+                std::copy(obs.begin() + obs_offset, obs.begin() + obs_offset + field_size,
+                          input_buffer.begin() + input_offset + frame * field_size);
+            }
+        } else {
+            std::move(input_buffer.begin() + input_offset + field_size,
+                      input_buffer.begin() + input_offset + frame_stack * field_size,
+                      input_buffer.begin() + input_offset);
+            std::copy(obs.begin() + obs_offset, obs.begin() + obs_offset + field_size,
+                      input_buffer.begin() + input_offset + (frame_stack - 1) * field_size);
+        }
+        input_offset += field_size * frame_stack;
+        obs_offset += field_size;
+    }
+}
+
 void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size){
     if (!ctx) {
         ctx = std::make_unique<ModelContext>();
@@ -14,8 +62,10 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
     ctx->session = std::make_unique<Ort::Session>(*env_, model_path.c_str(), session_options);
     
     ctx->num_inputs = ctx->session->GetInputCount();
+    if (ctx->num_inputs != 1) {
+        throw std::runtime_error("Only single-input ONNX models are supported: " + model_path);
+    }
     ctx->input_names.resize(ctx->num_inputs);
-    ctx->input_buffer.resize(input_size);
 
     for (size_t i = 0; i < ctx->num_inputs; i++) {
         Ort::AllocatedStringPtr input_name = ctx->session->GetInputNameAllocated(i, allocator_);
@@ -24,6 +74,17 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         ctx->input_shape = type_info.GetTensorTypeAndShapeInfo().GetShape();
         if (ctx->input_shape[0] == -1) ctx->input_shape[0] = 1;
     }
+
+    size_t model_input_size = 1;
+    for (size_t i = 0; i < ctx->input_shape.size(); i++) {
+        model_input_size *= static_cast<size_t>(ctx->input_shape[i]);
+    }
+    if (model_input_size != static_cast<size_t>(input_size)) {
+        throw std::runtime_error(
+            "ONNX input size mismatch for " + model_path + ": model expects " +
+            std::to_string(model_input_size) + " values, but config provides " + std::to_string(input_size));
+    }
+    ctx->input_buffer.resize(input_size);
 
     ctx->num_outputs = ctx->session->GetOutputCount();
     ctx->output_names.resize(ctx->num_outputs);
@@ -61,13 +122,17 @@ void InferenceNode::reset() {
     obs_.resize(obs_num_);
     active_ctx_ = normal_ctx_.get();
     std::fill(obs_.begin(), obs_.end(), 0.0f);
-    std::fill(joint_pos_.begin(), joint_pos_.end(), 0.0f);
-    std::fill(joint_vel_.begin(), joint_vel_.end(), 0.0f);
-    std::fill(motion_pos_.begin(), motion_pos_.end(), 0.0f);
-    std::fill(motion_vel_.begin(), motion_vel_.end(), 0.0f);
     std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
-    std::fill(quat_.begin(), quat_.end(), 0.0f);
-    std::fill(ang_vel_.begin(), ang_vel_.end(), 0.0f);
+    for (auto& segment : obs_segments_) {
+        std::fill(segment.begin(), segment.end(), 0.0f);
+    }
+    for (auto& segment : motion_obs_segments_) {
+        std::fill(segment.begin(), segment.end(), 0.0f);
+    }
+    for (auto& segment : extra_obs_segments_) {
+        std::fill(segment.begin(), segment.end(), 0.0f);
+    }
+    std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
     if (normal_ctx_) {
         std::fill(normal_ctx_->input_buffer.begin(), normal_ctx_->input_buffer.end(), 0.0f);
         std::fill(normal_ctx_->output_buffer.begin(), normal_ctx_->output_buffer.end(), 0.0f);
@@ -82,14 +147,10 @@ void InferenceNode::reset() {
         act_[i] = joint_default_angle_[i];
         last_act_[i] = joint_default_angle_[i];
     }
-    std::fill(joint_torques_.begin(), joint_torques_.end(), 0.0f);
     is_first_frame_ = true;
     motion_frame_ = 0;
     if(use_interrupt_){
         std::fill(interrupt_action_.begin(), interrupt_action_.end(), 0.0f);
-    }
-    if(use_attn_enc_){
-        std::fill(perception_obs_.begin(), perception_obs_.end(), 0.0f);
     }
 }
 
@@ -151,100 +212,32 @@ void InferenceNode::inference() {
         }
 
         try {
-            int offset = 0;
-
-            if(is_beyondmimic_.load()){
-                int idx = current_motion_idx_;
-                motion_pos_ = motion_loaders_[idx]->get_pos(motion_frame_);
-                motion_vel_ = motion_loaders_[idx]->get_vel(motion_frame_);
-                motion_frame_ += 1;
-                if(motion_frame_ >= motion_loaders_[idx]->get_num_frames()){
-                    motion_frame_ = motion_loaders_[idx]->get_num_frames() - 1;
-                }
-                for(int i = 0; i < joint_num_; i++){
-                    obs_[i + offset] = motion_pos_[i];
-                    obs_[i + joint_num_ + offset] = motion_vel_[i];
-                }
-                offset += joint_num_ * 2;
-            }
-
-            read_imu();
-            for (int i = 0; i < 3; i++) {
-                obs_[i + offset] = ang_vel_[i] * obs_scales_ang_vel_;
-            }
-            offset += 3;
-            Eigen::Quaternionf q_b2w(quat_[0], quat_[1], quat_[2], quat_[3]);
-            Eigen::Vector3f gravity_w(0.0f, 0.0f, -1.0f);
-            Eigen::Quaternionf q_w2b = q_b2w.inverse();
-            Eigen::Vector3f gravity_b = q_w2b * gravity_w;
-            if (gravity_b.z() > gravity_z_upper_){
-                RCLCPP_FATAL(this->get_logger(), "Robot fell down! Shutting down...");
-                rclcpp::shutdown();
-                return;
-            }
-            obs_[0 + offset] = gravity_b.x() * obs_scales_gravity_b_;
-            obs_[1 + offset] = gravity_b.y() * obs_scales_gravity_b_;
-            obs_[2 + offset] = gravity_b.z() * obs_scales_gravity_b_;
-            offset += 3;
+            std::unique_lock<std::mutex> mode_lock(mode_mutex_);
+            const bool is_beyondmimic = is_beyondmimic_.load();
+            std::vector<std::vector<float>>& obs_segments = is_beyondmimic ? motion_obs_segments_ : obs_segments_;
+            const std::vector<ObsSourceSpec>& obs_layout = is_beyondmimic ? motion_obs_layout_ : obs_layout_;
+            update_obs_segments(obs_segments, obs_layout);
             publish_imu();
-
-            if (!is_beyondmimic_.load()){
-                std::unique_lock<std::mutex> lock(cmd_mutex_);
-                obs_[0 + offset] = cmd_vel_[0] * obs_scales_lin_vel_;
-                obs_[1 + offset] = cmd_vel_[1] * obs_scales_lin_vel_;
-                obs_[2 + offset] = cmd_vel_[2] * obs_scales_ang_vel_;
-                offset += 3;
-            }
-
-            read_joints();
-            for (int i = 0; i < joint_num_; i++) {
-                obs_[offset + i] = (joint_pos_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
-                obs_[offset + joint_num_ + i] = joint_vel_[usd2urdf_[i]] * obs_scales_dof_vel_;
-            }
-            for(size_t i = 0; i < joint_limits_.size() / 2; i++){
-                if(joint_pos_[i] < joint_limits_[i * 2] || joint_pos_[i] > joint_limits_[i * 2 + 1]){
-                    RCLCPP_FATAL(this->get_logger(), "Joint %zu out of limit! Shutting down...", i+1);
-                    rclcpp::shutdown();
-                    return;
-                }
-            }
-            offset += joint_num_ * 2;
             publish_joint_states();
-
-            for (int i = 0; i < joint_num_; i++) {
-                obs_[offset + i] = active_ctx_->output_buffer[i];
-            }
-            offset += joint_num_;
-
-            if (use_interrupt_){
-                obs_[offset] = is_interrupt_.load() ? 1.0 : 0.0;
-                offset += 1;
-            }
+            const std::vector<int>& layout_sizes = is_beyondmimic ? motion_obs_layout_sizes_ : obs_layout_sizes_;
+            flatten_obs_segments(obs_segments, layout_sizes, obs_.begin());
 
             std::transform(obs_.begin(), obs_.end(), obs_.begin(), [this](float val) {
                 return std::clamp(val, -clip_observations_, clip_observations_);
             });
 
-            bool is_beyondmimic = is_beyondmimic_.load();
             int obs_num = is_beyondmimic ? motion_obs_num_: obs_num_;
             int frame_stack = is_beyondmimic ? motion_frame_stack_ : frame_stack_;
-            if (is_first_frame_) {
-                for (int i = 0; i < frame_stack; i++) {
-                    std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + i * obs_num);
-                }
-                if(use_attn_enc_){
-                    std::unique_lock<std::mutex> lock(perception_mutex_);
-                    std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
-                }
-                is_first_frame_ = false;
-            } else {
-                std::copy(active_ctx_->input_buffer.begin() + obs_num, active_ctx_->input_buffer.begin() + frame_stack * obs_num, active_ctx_->input_buffer.begin());
-                std::copy(obs_.begin(), obs_.end(), active_ctx_->input_buffer.begin() + (frame_stack - 1) * obs_num);
-                if(use_attn_enc_){
-                    std::unique_lock<std::mutex> lock(perception_mutex_);
-                    std::copy(perception_obs_.begin(), perception_obs_.end(), active_ctx_->input_buffer.begin() + frame_stack * obs_num);
-                }
+            ObsStackOrder stack_order = is_beyondmimic ? motion_obs_stack_order_ : obs_stack_order_;
+            update_stacked_obs(active_ctx_->input_buffer, obs_, obs_num, frame_stack, stack_order, layout_sizes, is_first_frame_);
+            if(use_attn_enc_){
+                update_obs_segments(extra_obs_segments_, extra_obs_layout_);
+                flatten_obs_segments(extra_obs_segments_, extra_obs_layout_sizes_, active_ctx_->input_buffer.begin() + frame_stack * obs_num);
             }
+            if (is_beyondmimic) {
+                step_motion_frame();
+            }
+            is_first_frame_ = false;
 
             active_ctx_->session->Run(Ort::RunOptions{nullptr}, 
                 active_ctx_->input_names_raw.data(), active_ctx_->input_tensor.get(), active_ctx_->num_inputs,

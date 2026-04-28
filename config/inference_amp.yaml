@@ -2,10 +2,9 @@ inference_node:
     ros__parameters:
         model_name: "policy_amp.onnx"
         act_alpha: 1.0
-        gyro_alpha: 1.0
-        angle_alpha: 1.0
-        obs_num: 78
+        obs_layout: ["ang_vel:3", "gravity_b:3", "cmd_vel:3", "dof_pos:23", "dof_vel:23", "last_action:23"]
         frame_stack: 1
+        obs_stack_order: "frame_major"
         joint_num: 23
         decimation: 5
         intra_threads: 1

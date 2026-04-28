@@ -9,12 +9,14 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("use_interrupt", false);
     this->declare_parameter<bool>("use_beyondmimic", false);
     this->declare_parameter<bool>("use_attn_enc", false);
-    this->declare_parameter<int>("obs_num", 78);
-    this->declare_parameter<int>("motion_obs_num", 121);
-    this->declare_parameter<int>("perception_obs_num", 187);
     this->declare_parameter<std::string>("perception_obs_topic", "elevation_data");
     this->declare_parameter<int>("frame_stack", 15);
     this->declare_parameter<int>("motion_frame_stack", 1);
+    this->declare_parameter<std::string>("obs_stack_order", "frame_major");
+    this->declare_parameter<std::string>("motion_obs_stack_order", "frame_major");
+    this->declare_parameter<std::vector<std::string>>("obs_layout", std::vector<std::string>{});
+    this->declare_parameter<std::vector<std::string>>("motion_obs_layout", std::vector<std::string>{});
+    this->declare_parameter<std::vector<std::string>>("extra_obs_layout", std::vector<std::string>{});
     this->declare_parameter<int>("joint_num", 23);
     this->declare_parameter<int>("decimation", 10);
     this->declare_parameter<float>("dt", 0.001);
@@ -41,12 +43,14 @@ void InferenceNode::load_config() {
     this->get_parameter("use_interrupt", use_interrupt_);
     this->get_parameter("use_beyondmimic", use_beyondmimic_);
     this->get_parameter("use_attn_enc", use_attn_enc_);
-    this->get_parameter("obs_num", obs_num_);
-    this->get_parameter("motion_obs_num", motion_obs_num_);
-    this->get_parameter("perception_obs_num", perception_obs_num_);
     this->get_parameter("perception_obs_topic", perception_obs_topic_);
     this->get_parameter("frame_stack", frame_stack_);
     this->get_parameter("motion_frame_stack", motion_frame_stack_);
+    this->get_parameter("obs_stack_order", obs_stack_order_name_);
+    this->get_parameter("motion_obs_stack_order", motion_obs_stack_order_name_);
+    this->get_parameter("obs_layout", obs_layout_specs_);
+    this->get_parameter("motion_obs_layout", motion_obs_layout_specs_);
+    this->get_parameter("extra_obs_layout", extra_obs_layout_specs_);
     this->get_parameter("joint_num", joint_num_);
     this->get_parameter("decimation", decimation_);
     this->get_parameter("dt", dt_);
@@ -64,6 +68,40 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_limits", joint_limits_);
     this->get_parameter("gravity_z_upper", gravity_z_upper_);
 
+    obs_stack_order_ = parse_obs_stack_order(obs_stack_order_name_);
+    motion_obs_stack_order_ = parse_obs_stack_order(motion_obs_stack_order_name_);
+    obs_layout_ = parse_obs_layout(obs_layout_specs_, "obs_layout");
+    if (use_beyondmimic_) {
+        motion_obs_layout_ = parse_obs_layout(motion_obs_layout_specs_, "motion_obs_layout");
+        motion_obs_layout_sizes_ = obs_layout_sizes(motion_obs_layout_);
+        motion_obs_num_ = obs_layout_size(motion_obs_layout_);
+    } else {
+        motion_obs_layout_.clear();
+        motion_obs_layout_sizes_.clear();
+        motion_obs_num_ = 0;
+    }
+    obs_layout_sizes_ = obs_layout_sizes(obs_layout_);
+    obs_num_ = obs_layout_size(obs_layout_);
+    if (use_attn_enc_) {
+        extra_obs_layout_ = parse_obs_layout(extra_obs_layout_specs_, "extra_obs_layout");
+        extra_obs_layout_sizes_ = obs_layout_sizes(extra_obs_layout_);
+        extra_obs_num_ = obs_layout_size(extra_obs_layout_);
+    } else {
+        extra_obs_layout_.clear();
+        extra_obs_layout_sizes_.clear();
+        extra_obs_num_ = 0;
+    }
+
+    if (obs_num_ <= 0 || frame_stack_ <= 0) {
+        throw std::runtime_error("obs_num and frame_stack must be positive");
+    }
+    if (use_beyondmimic_ && (motion_obs_num_ <= 0 || motion_frame_stack_ <= 0)) {
+        throw std::runtime_error("motion_obs_num and motion_frame_stack must be positive");
+    }
+
+    if (use_beyondmimic_ && motion_names_.size() != motion_model_names_.size()) {
+        throw std::runtime_error("motion_names and motion_model_names must have the same size");
+    }
 
     model_path_ = std::string(ROOT_DIR) + "models/" + model_name_;
     for(size_t i = 0; i < motion_names_.size(); i++){
@@ -80,8 +118,16 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "use_interrupt: %s", use_interrupt_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "use_beyondmimic: %s", use_beyondmimic_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "obs_num: %d", obs_num_);
-    RCLCPP_INFO(this->get_logger(), "perception_obs_num: %d", perception_obs_num_);
+    RCLCPP_INFO(this->get_logger(), "obs_stack_order: %s", obs_stack_order_name_.c_str());
+    print_vector<std::string>("obs_layout", obs_layout_specs_);
+    RCLCPP_INFO(this->get_logger(), "extra_obs_num: %d", extra_obs_num_);
+    print_vector<std::string>("extra_obs_layout", extra_obs_layout_specs_);
     RCLCPP_INFO(this->get_logger(), "perception_obs_topic: %s", perception_obs_topic_.c_str());
+    RCLCPP_INFO(this->get_logger(), "motion_obs_num: %d", motion_obs_num_);
+    RCLCPP_INFO(this->get_logger(), "motion_obs_stack_order: %s", motion_obs_stack_order_name_.c_str());
+    print_vector<std::string>("motion_obs_layout", motion_obs_layout_specs_);
+    RCLCPP_INFO(this->get_logger(), "frame_stack: %d", frame_stack_);
+    RCLCPP_INFO(this->get_logger(), "motion_frame_stack: %d", motion_frame_stack_);
     RCLCPP_INFO(this->get_logger(), "joint_num: %d", joint_num_);
     RCLCPP_INFO(this->get_logger(), "decimation: %d", decimation_);
     RCLCPP_INFO(this->get_logger(), "dt: %f", dt_);
@@ -154,9 +200,8 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                     is_running_.store(false);
                     RCLCPP_INFO(this->get_logger(), "Inference paused");
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                std::unique_lock<std::mutex> lock(mode_mutex_);
                 is_interrupt_.store(!is_interrupt_.load());
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
                 if (restore_flag){
                     is_running_.store(true);
@@ -168,20 +213,20 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                     is_running_.store(false);
                     RCLCPP_INFO(this->get_logger(), "Inference paused");
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                is_beyondmimic_.store(!is_beyondmimic_.load());
-                bool is_beyondmimic = is_beyondmimic_.load();
-                active_ctx_ = is_beyondmimic ? motion_ctxs_[current_motion_idx_].get() : normal_ctx_.get();
-                int obs_num = is_beyondmimic ? motion_obs_num_ : obs_num_;
-                obs_.resize(obs_num);
-                std::fill(obs_.begin(), obs_.end(), 0.0f);
-                std::fill(motion_pos_.begin(), motion_pos_.end(), 0.0f);
-                std::fill(motion_vel_.begin(), motion_vel_.end(), 0.0f);
-                std::fill(active_ctx_->input_buffer.begin(), active_ctx_->input_buffer.end(), 0.0f);
-                std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
-                is_first_frame_ = true;
-                motion_frame_ = 0;
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                bool is_beyondmimic = false;
+                {
+                    std::unique_lock<std::mutex> lock(mode_mutex_);
+                    is_beyondmimic_.store(!is_beyondmimic_.load());
+                    is_beyondmimic = is_beyondmimic_.load();
+                    active_ctx_ = is_beyondmimic ? motion_ctxs_[current_motion_idx_].get() : normal_ctx_.get();
+                    int obs_num = is_beyondmimic ? motion_obs_num_ : obs_num_;
+                    obs_.resize(obs_num);
+                    std::fill(obs_.begin(), obs_.end(), 0.0f);
+                    std::fill(active_ctx_->input_buffer.begin(), active_ctx_->input_buffer.end(), 0.0f);
+                    std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
+                    is_first_frame_ = true;
+                    motion_frame_ = 0;
+                }
                 if (is_beyondmimic) {
                     RCLCPP_INFO(this->get_logger(), "Beyondmimic mode enabled: %s", motion_names_[current_motion_idx_].c_str());
                 } else {
@@ -197,6 +242,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (use_beyondmimic_) {
         if (msg->buttons[5] == 1 && msg->buttons[5] != last_button5_) {
+            std::unique_lock<std::mutex> lock(mode_mutex_);
             if (is_beyondmimic_.load()) {
                 RCLCPP_WARN(this->get_logger(), "Cannot switch motion sequence while in beyondmimic mode");
             } else {
@@ -224,9 +270,12 @@ void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::
 void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg){
     if(use_attn_enc_){
         std::unique_lock<std::mutex> lock(perception_mutex_);
-        for(int i = 0; i < perception_obs_num_; i++){
-            perception_obs_[i] = msg->data[i];
+        if (msg->data.size() < perception_obs_buffer_.size()) {
+            RCLCPP_WARN(this->get_logger(), "Perception obs message too small: got %zu, expected %zu", msg->data.size(), perception_obs_buffer_.size());
+            std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
+            return;
         }
+        std::copy(msg->data.begin(), msg->data.begin() + perception_obs_buffer_.size(), perception_obs_buffer_.begin());
     }
 }
 
@@ -288,7 +337,6 @@ void InferenceNode::read_joints_srv(const std::shared_ptr<std_srvs::srv::Trigger
     try {
         response->success = true;
         response->message = "Joints read successfully";
-        read_joints();
         publish_joint_states();
     } catch (const std::exception& e) {
         response->success = false;
@@ -306,7 +354,6 @@ void InferenceNode::read_imu_srv(const std::shared_ptr<std_srvs::srv::Trigger::R
     try {
         response->success = true;
         response->message = "IMU read successfully";
-        read_imu();
         publish_imu();
     } catch (const std::exception& e) {
         response->success = false;
@@ -412,11 +459,15 @@ void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trig
 }
 
 void InferenceNode::publish_joint_states() {
+    joint_pos_buffer_ = robot_->get_joint_q();
+    joint_vel_buffer_ = robot_->get_joint_vel();
+    joint_torques_buffer_ = robot_->get_joint_tau();
     joint_state_msg_.header.stamp = this->now();
+    joint_state_msg_.effort.resize(joint_num_);
     for (int i = 0; i < joint_num_; i++) {
-        joint_state_msg_.position[i] = joint_pos_[i];
-        joint_state_msg_.velocity[i] = joint_vel_[i];
-        joint_state_msg_.effort[i] = joint_torques_[i];
+        joint_state_msg_.position[i] = joint_pos_buffer_[i];
+        joint_state_msg_.velocity[i] = joint_vel_buffer_[i];
+        joint_state_msg_.effort[i] = joint_torques_buffer_[i];
     }
     joint_state_publisher_->publish(joint_state_msg_);
 }
@@ -430,14 +481,16 @@ void InferenceNode::publish_action() {
 }
 
 void InferenceNode::publish_imu() {
+    quat_buffer_ = robot_->get_quat();
+    ang_vel_buffer_ = robot_->get_ang_vel();
     auto msg = sensor_msgs::msg::Imu();
     msg.header.stamp = this->now();
-    msg.orientation.w = quat_[0];
-    msg.orientation.x = quat_[1];
-    msg.orientation.y = quat_[2];
-    msg.orientation.z = quat_[3];
-    msg.angular_velocity.x = ang_vel_[0];
-    msg.angular_velocity.y = ang_vel_[1];
-    msg.angular_velocity.z = ang_vel_[2];
+    msg.orientation.w = quat_buffer_[0];
+    msg.orientation.x = quat_buffer_[1];
+    msg.orientation.y = quat_buffer_[2];
+    msg.orientation.z = quat_buffer_[3];
+    msg.angular_velocity.x = ang_vel_buffer_[0];
+    msg.angular_velocity.y = ang_vel_buffer_[1];
+    msg.angular_velocity.z = ang_vel_buffer_[2];
     imu_publisher_->publish(msg);
 }
