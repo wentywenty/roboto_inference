@@ -160,7 +160,6 @@ class InferenceNode : public rclcpp::Node {
     bool use_interrupt_, use_beyondmimic_, use_attn_enc_;
    private:
     std::shared_ptr<RobotInterface> robot_;
-    int offline_threshold_ = 10;
     std::atomic<bool> is_running_{false}, is_joy_control_{true}, is_interrupt_{false}, is_beyondmimic_{false};
     std::string model_name_, model_path_, perception_obs_topic_;
     std::vector<std::string> motion_names_, motion_model_names_, motion_paths_, motion_model_paths_;
@@ -179,7 +178,7 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
     std::thread inference_thread_;
     std::thread control_thread_;
-    float act_alpha_, gyro_alpha_, angle_alpha_;
+    float act_alpha_;
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;

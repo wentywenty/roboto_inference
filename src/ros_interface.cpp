@@ -5,8 +5,6 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{"motion.npz"});
     this->declare_parameter<std::vector<std::string>>("motion_model_names", std::vector<std::string>{"1.onnx"});
     this->declare_parameter<float>("act_alpha", 0.9);
-    this->declare_parameter<float>("gyro_alpha", 0.9);
-    this->declare_parameter<float>("angle_alpha", 0.9);
     this->declare_parameter<int>("intra_threads", -1);
     this->declare_parameter<bool>("use_interrupt", false);
     this->declare_parameter<bool>("use_beyondmimic", false);
@@ -39,8 +37,6 @@ void InferenceNode::load_config() {
     this->get_parameter("motion_names", motion_names_);
     this->get_parameter("motion_model_names", motion_model_names_);
     this->get_parameter("act_alpha", act_alpha_);
-    this->get_parameter("gyro_alpha", gyro_alpha_);
-    this->get_parameter("angle_alpha", angle_alpha_);
     this->get_parameter("intra_threads", intra_threads_);
     this->get_parameter("use_interrupt", use_interrupt_);
     this->get_parameter("use_beyondmimic", use_beyondmimic_);
@@ -80,8 +76,6 @@ void InferenceNode::load_config() {
         RCLCPP_INFO(this->get_logger(), "motion_model_path %zu: %s", i, motion_model_paths_[i].c_str());
     }
     RCLCPP_INFO(this->get_logger(), "act_alpha: %f", act_alpha_);
-    RCLCPP_INFO(this->get_logger(), "gyro_alpha: %f", gyro_alpha_);
-    RCLCPP_INFO(this->get_logger(), "angle_alpha: %f", angle_alpha_);
     RCLCPP_INFO(this->get_logger(), "intra_threads: %d", intra_threads_);
     RCLCPP_INFO(this->get_logger(), "use_interrupt: %s", use_interrupt_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "use_beyondmimic: %s", use_beyondmimic_ ? "true" : "false");
