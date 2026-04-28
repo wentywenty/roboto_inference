@@ -118,40 +118,52 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
 void InferenceNode::reset() {
     is_running_.store(false);
     is_interrupt_.store(false);
-    is_beyondmimic_.store(false);
-    obs_.resize(obs_num_);
-    active_ctx_ = normal_ctx_.get();
-    std::fill(obs_.begin(), obs_.end(), 0.0f);
+    is_motion_policy_.store(false);
+    active_policy_idx_ = 0;
     std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
-    for (auto& segment : obs_segments_) {
-        std::fill(segment.begin(), segment.end(), 0.0f);
-    }
-    for (auto& segment : motion_obs_segments_) {
-        std::fill(segment.begin(), segment.end(), 0.0f);
-    }
-    for (auto& segment : extra_obs_segments_) {
-        std::fill(segment.begin(), segment.end(), 0.0f);
-    }
     std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
-    if (normal_ctx_) {
-        std::fill(normal_ctx_->input_buffer.begin(), normal_ctx_->input_buffer.end(), 0.0f);
-        std::fill(normal_ctx_->output_buffer.begin(), normal_ctx_->output_buffer.end(), 0.0f);
-    }
-    for (auto& ctx : motion_ctxs_) {
-        if (ctx) {
-            std::fill(ctx->input_buffer.begin(), ctx->input_buffer.end(), 0.0f);
-            std::fill(ctx->output_buffer.begin(), ctx->output_buffer.end(), 0.0f);
-        }
+    for (PolicyRuntime& policy : policies_) {
+        reset_policy_runtime(policy);
     }
     for (int i = 0; i < joint_num_; i++) {
         act_[i] = joint_default_angle_[i];
         last_act_[i] = joint_default_angle_[i];
     }
-    is_first_frame_ = true;
-    motion_frame_ = 0;
-    if(use_interrupt_){
+    if(supports_interrupt()){
         std::fill(interrupt_action_.begin(), interrupt_action_.end(), 0.0f);
     }
+}
+
+InferenceNode::PolicyRuntime& InferenceNode::active_policy() {
+    return policies_[active_policy_idx_];
+}
+
+const InferenceNode::PolicyRuntime& InferenceNode::active_policy() const {
+    return policies_[active_policy_idx_];
+}
+
+bool InferenceNode::has_motion_policy() const {
+    return !motion_policy_indices_.empty();
+}
+
+bool InferenceNode::supports_interrupt() const {
+    return !interrupt_action_.empty();
+}
+
+void InferenceNode::reset_policy_runtime(PolicyRuntime& policy) {
+    std::fill(policy.obs.begin(), policy.obs.end(), 0.0f);
+    for (auto& segment : policy.obs_segments) {
+        std::fill(segment.begin(), segment.end(), 0.0f);
+    }
+    for (auto& segment : policy.extra_obs_segments) {
+        std::fill(segment.begin(), segment.end(), 0.0f);
+    }
+    if (policy.ctx) {
+        std::fill(policy.ctx->input_buffer.begin(), policy.ctx->input_buffer.end(), 0.0f);
+        std::fill(policy.ctx->output_buffer.begin(), policy.ctx->output_buffer.end(), 0.0f);
+    }
+    policy.motion_frame = 0;
+    policy.is_first_frame = true;
 }
 
 void InferenceNode::apply_action() {
@@ -213,44 +225,39 @@ void InferenceNode::inference() {
 
         try {
             std::unique_lock<std::mutex> mode_lock(mode_mutex_);
-            const bool is_beyondmimic = is_beyondmimic_.load();
-            std::vector<std::vector<float>>& obs_segments = is_beyondmimic ? motion_obs_segments_ : obs_segments_;
-            const std::vector<ObsSourceSpec>& obs_layout = is_beyondmimic ? motion_obs_layout_ : obs_layout_;
-            update_obs_segments(obs_segments, obs_layout);
+            auto& policy = active_policy();
+            update_obs_segments(policy.obs_segments, policy.obs_layout);
             publish_imu();
             publish_joint_states();
-            const std::vector<int>& layout_sizes = is_beyondmimic ? motion_obs_layout_sizes_ : obs_layout_sizes_;
-            flatten_obs_segments(obs_segments, layout_sizes, obs_.begin());
+            flatten_obs_segments(policy.obs_segments, policy.obs.begin());
 
-            std::transform(obs_.begin(), obs_.end(), obs_.begin(), [this](float val) {
+            std::transform(policy.obs.begin(), policy.obs.end(), policy.obs.begin(), [this](float val) {
                 return std::clamp(val, -clip_observations_, clip_observations_);
             });
 
-            int obs_num = is_beyondmimic ? motion_obs_num_: obs_num_;
-            int frame_stack = is_beyondmimic ? motion_frame_stack_ : frame_stack_;
-            ObsStackOrder stack_order = is_beyondmimic ? motion_obs_stack_order_ : obs_stack_order_;
-            update_stacked_obs(active_ctx_->input_buffer, obs_, obs_num, frame_stack, stack_order, layout_sizes, is_first_frame_);
-            if(use_attn_enc_){
-                update_obs_segments(extra_obs_segments_, extra_obs_layout_);
-                flatten_obs_segments(extra_obs_segments_, extra_obs_layout_sizes_, active_ctx_->input_buffer.begin() + frame_stack * obs_num);
+            update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
+                               policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
+            if(policy.extra_obs_num > 0){
+                update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
+                flatten_obs_segments(policy.extra_obs_segments, policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
             }
-            if (is_beyondmimic) {
+            if (policy.motion_loader) {
                 step_motion_frame();
             }
-            is_first_frame_ = false;
+            policy.is_first_frame = false;
 
-            active_ctx_->session->Run(Ort::RunOptions{nullptr}, 
-                active_ctx_->input_names_raw.data(), active_ctx_->input_tensor.get(), active_ctx_->num_inputs,
-                active_ctx_->output_names_raw.data(), active_ctx_->output_tensor.get(), active_ctx_->num_outputs);
+            policy.ctx->session->Run(Ort::RunOptions{nullptr},
+                policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
+                policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
 
             {
                 std::unique_lock<std::mutex> lock(act_mutex_);
-                for (int i = 0; i < active_ctx_->output_buffer.size(); i++) {
-                    active_ctx_->output_buffer[i] = std::clamp(active_ctx_->output_buffer[i], -clip_actions_, clip_actions_);
-                    act_[usd2urdf_[i]] = active_ctx_->output_buffer[i];
+                for (int i = 0; i < policy.ctx->output_buffer.size(); i++) {
+                    policy.ctx->output_buffer[i] = std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
+                    act_[usd2urdf_[i]] = policy.ctx->output_buffer[i];
                     act_[usd2urdf_[i]] = act_[usd2urdf_[i]] * action_scale_ + joint_default_angle_[usd2urdf_[i]];
                 }
-                if(use_interrupt_ && is_interrupt_.load()){
+                if(supports_interrupt() && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
                     for (size_t i = 0; i < interrupt_action_.size(); i++) {
                         act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];
@@ -299,10 +306,10 @@ int main(int argc, char **argv) {
         RCLCPP_INFO(node->get_logger(), "Press 'A' to reset motors");
         RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause inference");
         RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between Gamepad Control / cmd_vel Control");
-        if (node->use_interrupt_ || node->use_beyondmimic_){
+        if (node->supports_interrupt() || node->has_motion_policy()){
             RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode (available in beyondmimic / interrupt modes)");
         }
-        if (node->use_beyondmimic_){
+        if (node->has_motion_policy()){
             RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence (available in beyondmimic mode)");
         }
         RCLCPP_INFO(node->get_logger(), "Right Stick: Control forward, backward, left and right movement");

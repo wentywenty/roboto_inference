@@ -32,6 +32,23 @@ ObsSourceSpec make_source_spec(const std::string& name, ObsSourceId source, int 
     return spec;
 }
 
+std::vector<std::string> split_obs_layout_spec(const std::string& layout_spec) {
+    std::vector<std::string> layout_specs;
+    size_t start = 0;
+    while (start < layout_spec.size()) {
+        const size_t end = layout_spec.find(',', start);
+        const std::string token = trim_copy(layout_spec.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (!token.empty()) {
+            layout_specs.push_back(token);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return layout_specs;
+}
+
 }
 
 std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
@@ -42,7 +59,7 @@ std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
     }
 
     std::vector<ObsSourceSpec> layout;
-        layout.reserve(layout_specs.size());
+    layout.reserve(layout_specs.size());
     for (const std::string& raw_spec : layout_specs) {
         const std::string spec = trim_copy(raw_spec);
         const size_t separator = spec.find(':');
@@ -64,6 +81,12 @@ std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
     return layout;
 }
 
+std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
+    const std::string& layout_spec,
+    const std::string& layout_name) {
+    return parse_obs_layout(split_obs_layout_spec(layout_spec), layout_name);
+}
+
 int InferenceNode::obs_layout_size(const std::vector<ObsSourceSpec>& layout) const {
     int size = 0;
     for (const ObsSourceSpec& source : layout) {
@@ -79,6 +102,12 @@ std::vector<int> InferenceNode::obs_layout_sizes(const std::vector<ObsSourceSpec
         sizes.push_back(source.size);
     }
     return sizes;
+}
+
+bool InferenceNode::obs_layout_has_source(const std::vector<ObsSourceSpec>& layout, ObsSourceId source) const {
+    return std::any_of(layout.begin(), layout.end(), [source](const ObsSourceSpec& spec) {
+        return spec.source == source;
+    });
 }
 
 void InferenceNode::update_obs_segments(std::vector<std::vector<float>>& segments, const std::vector<ObsSourceSpec>& layout) {
@@ -99,29 +128,34 @@ void InferenceNode::update_obs_segments(std::vector<std::vector<float>>& segment
 }
 
 void InferenceNode::flatten_obs_segments(const std::vector<std::vector<float>>& segments,
-                                         const std::vector<int>& layout_sizes,
                                          std::vector<float>::iterator output_begin) {
     int offset = 0;
     for (size_t i = 0; i < segments.size(); i++) {
         std::copy(segments[i].begin(), segments[i].end(), output_begin + offset);
-        offset += layout_sizes[i];
+        offset += static_cast<int>(segments[i].size());
     }
 }
 
 void InferenceNode::step_motion_frame() {
-    motion_frame_ += 1;
-    if (motion_frame_ >= motion_loaders_[current_motion_idx_]->get_num_frames()) {
-        motion_frame_ = motion_loaders_[current_motion_idx_]->get_num_frames() - 1;
+    auto& policy = active_policy();
+    if (!policy.motion_loader) {
+        return;
+    }
+    policy.motion_frame += 1;
+    if (policy.motion_frame >= policy.motion_loader->get_num_frames()) {
+        policy.motion_frame = policy.motion_loader->get_num_frames() - 1;
     }
 }
 
 void InferenceNode::get_motion_pos_obs(std::vector<float>& segment) {
-    const std::vector<float>& motion_pos = motion_loaders_[current_motion_idx_]->get_pos(motion_frame_);
+    auto& policy = active_policy();
+    const std::vector<float>& motion_pos = policy.motion_loader->get_pos(policy.motion_frame);
     std::copy(motion_pos.begin(), motion_pos.end(), segment.begin());
 }
 
 void InferenceNode::get_motion_vel_obs(std::vector<float>& segment) {
-    const std::vector<float>& motion_vel = motion_loaders_[current_motion_idx_]->get_vel(motion_frame_);
+    auto& policy = active_policy();
+    const std::vector<float>& motion_vel = policy.motion_loader->get_vel(policy.motion_frame);
     std::copy(motion_vel.begin(), motion_vel.end(), segment.begin());
 }
 
@@ -178,8 +212,9 @@ void InferenceNode::get_dof_vel_obs(std::vector<float>& segment) {
 }
 
 void InferenceNode::get_last_action_obs(std::vector<float>& segment) {
+    const auto& policy = active_policy();
     for (int i = 0; i < joint_num_; i++) {
-        segment[i] = active_ctx_->output_buffer[i];
+        segment[i] = policy.ctx->output_buffer[i];
     }
 }
 
@@ -189,5 +224,5 @@ void InferenceNode::get_interrupt_obs(std::vector<float>& segment) {
 
 void InferenceNode::get_perception_obs(std::vector<float>& segment) {
     std::unique_lock<std::mutex> lock(perception_mutex_);
-    std::copy(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), segment.begin());
+    std::copy(perception_obs_buffer_.begin(), perception_obs_buffer_.begin() + segment.size(), segment.begin());
 }
