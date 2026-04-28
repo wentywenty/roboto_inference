@@ -49,11 +49,31 @@ std::vector<std::string> split_obs_layout_spec(const std::string& layout_spec) {
     return layout_specs;
 }
 
+ObsSourceSpec parse_obs_source_spec(const std::string& raw_spec, const std::string& layout_name) {
+    const std::string spec = trim_copy(raw_spec);
+    const size_t separator = spec.find(':');
+    if (separator == std::string::npos || separator == 0 || separator == spec.size() - 1) {
+        throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
+    }
+
+    const std::string name = trim_copy(spec.substr(0, separator));
+    const std::string size_text = trim_copy(spec.substr(separator + 1));
+    if (name.empty() || size_text.empty()) {
+        throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
+    }
+    if (!std::all_of(size_text.begin(), size_text.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+        throw std::runtime_error(layout_name + " field size must be a positive integer: " + raw_spec);
+    }
+
+    return make_source_spec(name, parse_source_name(name), std::stoi(size_text));
+}
+
 }
 
 std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
-    const std::vector<std::string>& layout_specs,
+    const std::string& layout_spec,
     const std::string& layout_name) {
+    const std::vector<std::string> layout_specs = split_obs_layout_spec(layout_spec);
     if (layout_specs.empty()) {
         throw std::runtime_error(layout_name + " must be explicitly configured");
     }
@@ -61,30 +81,9 @@ std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
     std::vector<ObsSourceSpec> layout;
     layout.reserve(layout_specs.size());
     for (const std::string& raw_spec : layout_specs) {
-        const std::string spec = trim_copy(raw_spec);
-        const size_t separator = spec.find(':');
-        if (separator == std::string::npos || separator == 0 || separator == spec.size() - 1) {
-            throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
-        }
-        const std::string name = trim_copy(spec.substr(0, separator));
-        const std::string size_text = trim_copy(spec.substr(separator + 1));
-        if (name.empty() || size_text.empty()) {
-            throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
-        }
-        if (!std::all_of(size_text.begin(), size_text.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
-            throw std::runtime_error(layout_name + " field size must be a positive integer: " + raw_spec);
-        }
-        const int size = std::stoi(size_text);
-        const ObsSourceId source = parse_source_name(name);
-        layout.push_back(make_source_spec(name, source, size));
+        layout.push_back(parse_obs_source_spec(raw_spec, layout_name));
     }
     return layout;
-}
-
-std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
-    const std::string& layout_spec,
-    const std::string& layout_name) {
-    return parse_obs_layout(split_obs_layout_spec(layout_spec), layout_name);
 }
 
 int InferenceNode::obs_layout_size(const std::vector<ObsSourceSpec>& layout) const {

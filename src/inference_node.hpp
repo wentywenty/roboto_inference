@@ -273,8 +273,6 @@ class InferenceNode : public rclcpp::Node {
     ObsStackOrder parse_obs_stack_order(const std::string& stack_order_name);
     std::vector<ObsSourceSpec> parse_obs_layout(const std::string& layout_spec,
                                                 const std::string& layout_name);
-    std::vector<ObsSourceSpec> parse_obs_layout(const std::vector<std::string>& layout_specs,
-                                                const std::string& layout_name);
     int obs_layout_size(const std::vector<ObsSourceSpec>& layout) const;
     std::vector<int> obs_layout_sizes(const std::vector<ObsSourceSpec>& layout) const;
     void update_stacked_obs(std::vector<float>& input_buffer, const std::vector<float>& obs,
