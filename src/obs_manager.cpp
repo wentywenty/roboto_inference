@@ -194,8 +194,7 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
         segment[i] = (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
     }
     for(size_t i = 0; i < joint_limits_.size() / 2; i++){
-        const long int joint_idx = usd2urdf_[i];
-        if(joint_pos_buffer_[joint_idx] < joint_limits_[i * 2] || joint_pos_buffer_[joint_idx] > joint_limits_[i * 2 + 1]){
+        if(joint_pos_buffer_[i] < joint_limits_[i * 2] || joint_pos_buffer_[i] > joint_limits_[i * 2 + 1]){
             RCLCPP_FATAL(this->get_logger(), "Joint %zu out of limit! Shutting down...", i+1);
             rclcpp::shutdown();
             throw std::runtime_error("Joint out of limit");
