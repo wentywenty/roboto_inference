@@ -115,22 +115,38 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         *ctx->memory_info, ctx->output_buffer.data(), ctx->output_buffer.size(), ctx->output_shape.data(), ctx->output_shape.size()));
 }
 
-void InferenceNode::reset() {
+void InferenceNode::reset_runtime_state() {
     is_running_.store(false);
     is_interrupt_.store(false);
     is_motion_policy_.store(false);
     active_policy_idx_ = 0;
-    std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
-    std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    {
+        std::unique_lock<std::mutex> lock(perception_mutex_);
+        std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
+    }
+    {
+        std::unique_lock<std::mutex> lock(act_mutex_);
+        for (int i = 0; i < joint_num_; i++) {
+            act_[i] = static_cast<float>(joint_default_angle_[i]);
+            last_act_[i] = static_cast<float>(joint_default_angle_[i]);
+        }
+    }
+    if (supports_interrupt()) {
+        if (joint_default_angle_.size() < interrupt_action_.size()) {
+            throw std::runtime_error("joint_default_angle is smaller than interrupt_action");
+        }
+        std::unique_lock<std::mutex> lock(interrupt_mutex_);
+        const size_t offset = joint_default_angle_.size() - interrupt_action_.size();
+        for (size_t i = 0; i < interrupt_action_.size(); i++) {
+            interrupt_action_[i] = static_cast<float>(joint_default_angle_[offset + i]);
+        }
+    }
     for (PolicyRuntime& policy : policies_) {
         reset_policy_runtime(policy);
-    }
-    for (int i = 0; i < joint_num_; i++) {
-        act_[i] = joint_default_angle_[i];
-        last_act_[i] = joint_default_angle_[i];
-    }
-    if(supports_interrupt()){
-        std::fill(interrupt_action_.begin(), interrupt_action_.end(), 0.0f);
     }
 }
 
@@ -140,6 +156,40 @@ InferenceNode::PolicyRuntime& InferenceNode::active_policy() {
 
 const InferenceNode::PolicyRuntime& InferenceNode::active_policy() const {
     return policies_[active_policy_idx_];
+}
+
+void InferenceNode::initialize_runtime_state() {
+    active_policy_idx_ = 0;
+
+    joint_state_msg_.name.resize(joint_num_);
+    joint_state_msg_.position.assign(joint_num_, 0.0f);
+    joint_state_msg_.velocity.assign(joint_num_, 0.0f);
+    joint_state_msg_.effort.assign(joint_num_, 0.0f);
+    action_msg_.name.resize(joint_num_);
+    action_msg_.position.assign(joint_num_, 0.0f);
+    for (int i = 0; i < joint_num_; i++) {
+        joint_state_msg_.name[i] = "joint_" + std::to_string(i + 1);
+        action_msg_.name[i] = "action_" + std::to_string(i + 1);
+    }
+
+    cmd_vel_.assign(3, 0.0f);
+    act_.assign(joint_num_, 0.0f);
+    last_act_.assign(joint_num_, 0.0f);
+    joint_pos_buffer_.assign(joint_num_, 0.0f);
+    joint_vel_buffer_.assign(joint_num_, 0.0f);
+    joint_torques_buffer_.assign(joint_num_, 0.0f);
+    quat_buffer_.assign(4, 0.0f);
+    ang_vel_buffer_.assign(3, 0.0f);
+    if (has_obs_source("perception")) {
+        perception_obs_buffer_.assign(perception_obs_num_, 0.0f);
+    } else {
+        perception_obs_buffer_.clear();
+    }
+    if (has_obs_source("interrupt")) {
+        interrupt_action_.assign(10, 0.0f);
+    } else {
+        interrupt_action_.clear();
+    }
 }
 
 bool InferenceNode::has_motion_policy() const {

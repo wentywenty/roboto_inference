@@ -101,14 +101,20 @@ void InferenceNode::load_config() {
             policy.motion_path = std::string(ROOT_DIR) + "motions/" + policy_motion_name;
         }
         policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
-        policy.obs_layout_sizes = obs_layout_sizes(policy.obs_layout);
-        policy.obs_num = obs_layout_size(policy.obs_layout);
+        policy.obs_layout_sizes.reserve(policy.obs_layout.size());
+        for (const ObsSourceSpec& source : policy.obs_layout) {
+            policy.obs_layout_sizes.push_back(source.size);
+            policy.obs_num += source.size;
+            if (source.name == "perception") {
+                perception_obs_num_ = source.size;
+            }
+        }
         if (!policy_extra_obs_layout.empty()) {
             policy.extra_obs_layout = parse_obs_layout(policy_extra_obs_layout, "extra_obs_layouts[" + std::to_string(i) + "]");
-            policy.extra_obs_num = obs_layout_size(policy.extra_obs_layout);
             for (const ObsSourceSpec& source : policy.extra_obs_layout) {
-                if (source.source == ObsSourceId::Perception) {
-                    perception_obs_num_ = std::max(perception_obs_num_, source.size);
+                policy.extra_obs_num += source.size;
+                if (source.name == "perception") {
+                    perception_obs_num_ = source.size;
                 }
             }
         }
@@ -120,12 +126,6 @@ void InferenceNode::load_config() {
         policies_.push_back(std::move(policy));
     }
 
-    if (std::any_of(policies_.begin(), policies_.end(), [this](const PolicyRuntime& policy) {
-            return obs_layout_has_source(policy.obs_layout, ObsSourceId::Interrupt);
-        })) {
-        interrupt_action_ = std::vector<float>(10, 0.0f);
-    }
-
     for(size_t i = 0; i < policies_.size(); i++) {
         RCLCPP_INFO(this->get_logger(), "policy %zu: %s", i, policies_[i].name.c_str());
         RCLCPP_INFO(this->get_logger(), "policy_model_path %zu: %s", i, policies_[i].model_path.c_str());
@@ -135,7 +135,7 @@ void InferenceNode::load_config() {
     }
     RCLCPP_INFO(this->get_logger(), "act_alpha: %f", act_alpha_);
     RCLCPP_INFO(this->get_logger(), "intra_threads: %d", intra_threads_);
-    RCLCPP_INFO(this->get_logger(), "supports_interrupt: %s", supports_interrupt() ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "supports_interrupt: %s", has_obs_source("interrupt") ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "has_motion_policy: %s", motion_policy_indices_.empty() ? "false" : "true");
     RCLCPP_INFO(this->get_logger(), "perception_obs_num: %d", perception_obs_num_);
     print_vector<std::string>("extra_obs_layouts", extra_obs_layouts);
@@ -172,7 +172,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if ((msg->buttons[2] == 1 && msg->buttons[2] != last_button0_)) {
         if(is_running_.load()){
-            reset();
+            reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
         }
         if (robot_->is_init_.load()){
@@ -185,7 +185,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (msg->buttons[0] == 1 && msg->buttons[0] != last_button1_) {
         if (is_running_.load()){
-            reset();
+            reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
         }
         if (!robot_->is_init_.load()){

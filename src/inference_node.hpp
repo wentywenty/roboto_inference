@@ -32,22 +32,16 @@ enum class ObsStackOrder {
     ObsMajor,
 };
 
-enum class ObsSourceId {
-    MotionPos,
-    MotionVel,
-    AngVel,
-    GravityB,
-    CmdVel,
-    DofPos,
-    DofVel,
-    LastAction,
-    Interrupt,
-    Perception,
+class InferenceNode;
+
+struct ObsSourceDefinition {
+    const char* name;
+    void (InferenceNode::*get)(std::vector<float>& segment);
 };
 
 struct ObsSourceSpec {
     std::string name;
-    ObsSourceId source;
+    const ObsSourceDefinition* source;
     int size;
 };
 
@@ -69,6 +63,7 @@ class InferenceNode : public rclcpp::Node {
         size_t num_inputs;
         size_t num_outputs;
     };
+
     struct PolicyRuntime {
         std::string name;
         std::string model_path;
@@ -125,28 +120,8 @@ class InferenceNode : public rclcpp::Node {
             setup_model(policy.ctx, policy.model_path,
                         policy.obs_num * policy.frame_stack + policy.extra_obs_num);
         }
-        active_policy_idx_ = 0;
-        cmd_vel_ = std::vector<float>(3, 0.0);
-        act_ = std::vector<float>(joint_num_, 0.0);
-        last_act_ = std::vector<float>(joint_num_, 0.0);
-        
-        joint_state_msg_.name.resize(joint_num_);
-        joint_state_msg_.position.resize(joint_num_, 0.0);
-        joint_state_msg_.velocity.resize(joint_num_, 0.0);
-        joint_state_msg_.effort.resize(joint_num_, 0.0);
-        action_msg_.name.resize(joint_num_);
-        action_msg_.position.resize(joint_num_, 0.0);
-        for (int i = 0; i < joint_num_; i++) {
-            joint_state_msg_.name[i] = "joint_" + std::to_string(i+1);
-            action_msg_.name[i] = "action_" + std::to_string(i+1);
-        }
-        perception_obs_buffer_.resize(perception_obs_num_, 0.0f);
-        joint_pos_buffer_.resize(joint_num_, 0.0f);
-        joint_vel_buffer_.resize(joint_num_, 0.0f);
-        joint_torques_buffer_.resize(joint_num_, 0.0f);
-        quat_buffer_.resize(4, 0.0f);
-        ang_vel_buffer_.resize(3, 0.0f);
-        reset();
+        initialize_runtime_state();
+        reset_runtime_state();
 
         auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
         joy_subscription_ = this->create_subscription<sensor_msgs::msg::Joy>(
@@ -197,7 +172,7 @@ class InferenceNode : public rclcpp::Node {
         if (control_thread_.joinable()) {
             control_thread_.join();
         }
-        reset();
+        reset_runtime_state();
         if(robot_){
             robot_.reset();
         }
@@ -251,33 +226,44 @@ class InferenceNode : public rclcpp::Node {
     void apply_action();
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
+
+    void load_config();
+    void setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size);
+
+    // Policy/model runtime helpers.
+    void initialize_runtime_state();
+    void reset_runtime_state();
     void reset_policy_runtime(PolicyRuntime& policy);
-    bool obs_layout_has_source(const std::vector<ObsSourceSpec>& layout, ObsSourceId source) const;
-    void update_obs_segments(std::vector<std::vector<float>>& segments, const std::vector<ObsSourceSpec>& layout);
+    void step_motion_frame();
+
+    // Observation registry and layout helpers.
+    static const std::vector<ObsSourceDefinition>& obs_source_definitions();
+    std::vector<ObsSourceSpec> parse_obs_layout(const std::string& layout_spec,
+                                                const std::string& layout_name);
+    bool has_obs_source(const std::string& source_name) const;
+    ObsStackOrder parse_obs_stack_order(const std::string& stack_order_name);
+
+    // Observation runtime helpers.
+    void update_obs_segments(std::vector<std::vector<float>>& segments,
+                             const std::vector<ObsSourceSpec>& layout);
     void flatten_obs_segments(const std::vector<std::vector<float>>& segments,
                               std::vector<float>::iterator output_begin);
-    void step_motion_frame();
-    void get_motion_pos_obs(std::vector<float>& segment);
-    void get_motion_vel_obs(std::vector<float>& segment);
+    void update_stacked_obs(std::vector<float>& input_buffer, const std::vector<float>& obs,
+                            int obs_num, int frame_stack, ObsStackOrder stack_order,
+                            const std::vector<int>& field_sizes, bool is_first_frame);
+
+    // Observation getters.
+    void get_cmd_vel_obs(std::vector<float>& segment);
     void get_ang_vel_obs(std::vector<float>& segment);
     void get_gravity_b_obs(std::vector<float>& segment);
-    void get_cmd_vel_obs(std::vector<float>& segment);
     void get_dof_pos_obs(std::vector<float>& segment);
     void get_dof_vel_obs(std::vector<float>& segment);
     void get_last_action_obs(std::vector<float>& segment);
     void get_interrupt_obs(std::vector<float>& segment);
     void get_perception_obs(std::vector<float>& segment);
-    void reset();
-    void load_config();
-    void setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size);
-    ObsStackOrder parse_obs_stack_order(const std::string& stack_order_name);
-    std::vector<ObsSourceSpec> parse_obs_layout(const std::string& layout_spec,
-                                                const std::string& layout_name);
-    int obs_layout_size(const std::vector<ObsSourceSpec>& layout) const;
-    std::vector<int> obs_layout_sizes(const std::vector<ObsSourceSpec>& layout) const;
-    void update_stacked_obs(std::vector<float>& input_buffer, const std::vector<float>& obs,
-                            int obs_num, int frame_stack, ObsStackOrder stack_order,
-                            const std::vector<int>& field_sizes, bool is_first_frame);
+    void get_motion_pos_obs(std::vector<float>& segment);
+    void get_motion_vel_obs(std::vector<float>& segment);
+
     void init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                          std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,

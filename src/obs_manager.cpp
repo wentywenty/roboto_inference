@@ -10,24 +10,10 @@ std::string trim_copy(const std::string& value) {
     return std::string(first, last);
 }
 
-ObsSourceId parse_source_name(const std::string& name) {
-    if (name == "motion_pos") return ObsSourceId::MotionPos;
-    if (name == "motion_vel") return ObsSourceId::MotionVel;
-    if (name == "ang_vel") return ObsSourceId::AngVel;
-    if (name == "gravity_b") return ObsSourceId::GravityB;
-    if (name == "cmd_vel") return ObsSourceId::CmdVel;
-    if (name == "dof_pos") return ObsSourceId::DofPos;
-    if (name == "dof_vel") return ObsSourceId::DofVel;
-    if (name == "last_action") return ObsSourceId::LastAction;
-    if (name == "interrupt") return ObsSourceId::Interrupt;
-    if (name == "perception") return ObsSourceId::Perception;
-    throw std::runtime_error("Unsupported obs source: " + name);
-}
-
-ObsSourceSpec make_source_spec(const std::string& name, ObsSourceId source, int size) {
+ObsSourceSpec make_source_spec(const std::string& name, const ObsSourceDefinition& source, int size) {
     ObsSourceSpec spec;
     spec.name = name;
-    spec.source = source;
+    spec.source = &source;
     spec.size = size;
     return spec;
 }
@@ -49,25 +35,22 @@ std::vector<std::string> split_obs_layout_spec(const std::string& layout_spec) {
     return layout_specs;
 }
 
-ObsSourceSpec parse_obs_source_spec(const std::string& raw_spec, const std::string& layout_name) {
-    const std::string spec = trim_copy(raw_spec);
-    const size_t separator = spec.find(':');
-    if (separator == std::string::npos || separator == 0 || separator == spec.size() - 1) {
-        throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
-    }
-
-    const std::string name = trim_copy(spec.substr(0, separator));
-    const std::string size_text = trim_copy(spec.substr(separator + 1));
-    if (name.empty() || size_text.empty()) {
-        throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
-    }
-    if (!std::all_of(size_text.begin(), size_text.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
-        throw std::runtime_error(layout_name + " field size must be a positive integer: " + raw_spec);
-    }
-
-    return make_source_spec(name, parse_source_name(name), std::stoi(size_text));
 }
 
+const std::vector<ObsSourceDefinition>& InferenceNode::obs_source_definitions() {
+    static const std::vector<ObsSourceDefinition> definitions{
+        {"motion_pos", &InferenceNode::get_motion_pos_obs},
+        {"motion_vel", &InferenceNode::get_motion_vel_obs},
+        {"ang_vel", &InferenceNode::get_ang_vel_obs},
+        {"gravity_b", &InferenceNode::get_gravity_b_obs},
+        {"cmd_vel", &InferenceNode::get_cmd_vel_obs},
+        {"dof_pos", &InferenceNode::get_dof_pos_obs},
+        {"dof_vel", &InferenceNode::get_dof_vel_obs},
+        {"last_action", &InferenceNode::get_last_action_obs},
+        {"interrupt", &InferenceNode::get_interrupt_obs},
+        {"perception", &InferenceNode::get_perception_obs},
+    };
+    return definitions;
 }
 
 std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
@@ -81,48 +64,47 @@ std::vector<ObsSourceSpec> InferenceNode::parse_obs_layout(
     std::vector<ObsSourceSpec> layout;
     layout.reserve(layout_specs.size());
     for (const std::string& raw_spec : layout_specs) {
-        layout.push_back(parse_obs_source_spec(raw_spec, layout_name));
+        const std::string spec = trim_copy(raw_spec);
+        const size_t separator = spec.find(':');
+        if (separator == std::string::npos || separator == 0 || separator == spec.size() - 1) {
+            throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
+        }
+
+        const std::string name = trim_copy(spec.substr(0, separator));
+        const std::string size_text = trim_copy(spec.substr(separator + 1));
+        if (name.empty() || size_text.empty()) {
+            throw std::runtime_error(layout_name + " entry must use 'name:size' format: " + raw_spec);
+        }
+        if (!std::all_of(size_text.begin(), size_text.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            throw std::runtime_error(layout_name + " field size must be a positive integer: " + raw_spec);
+        }
+
+        const auto& definitions = obs_source_definitions();
+        const auto source = std::find_if(definitions.begin(), definitions.end(), [&name](const ObsSourceDefinition& definition) {
+            return name == definition.name;
+        });
+        if (source == definitions.end()) {
+            throw std::runtime_error("Unsupported obs source: " + name);
+        }
+
+        layout.push_back(make_source_spec(name, *source, std::stoi(size_text)));
     }
     return layout;
 }
 
-int InferenceNode::obs_layout_size(const std::vector<ObsSourceSpec>& layout) const {
-    int size = 0;
-    for (const ObsSourceSpec& source : layout) {
-        size += source.size;
-    }
-    return size;
-}
-
-std::vector<int> InferenceNode::obs_layout_sizes(const std::vector<ObsSourceSpec>& layout) const {
-    std::vector<int> sizes;
-    sizes.reserve(layout.size());
-    for (const ObsSourceSpec& source : layout) {
-        sizes.push_back(source.size);
-    }
-    return sizes;
-}
-
-bool InferenceNode::obs_layout_has_source(const std::vector<ObsSourceSpec>& layout, ObsSourceId source) const {
-    return std::any_of(layout.begin(), layout.end(), [source](const ObsSourceSpec& spec) {
-        return spec.source == source;
+bool InferenceNode::has_obs_source(const std::string& source_name) const {
+    return std::any_of(policies_.begin(), policies_.end(), [this, &source_name](const PolicyRuntime& policy) {
+        const auto source_matches = [&source_name](const ObsSourceSpec& spec) {
+            return spec.name == source_name;
+        };
+        return std::any_of(policy.obs_layout.begin(), policy.obs_layout.end(), source_matches) ||
+               std::any_of(policy.extra_obs_layout.begin(), policy.extra_obs_layout.end(), source_matches);
     });
 }
 
 void InferenceNode::update_obs_segments(std::vector<std::vector<float>>& segments, const std::vector<ObsSourceSpec>& layout) {
     for (size_t i = 0; i < layout.size(); i++) {
-        switch (layout[i].source) {
-            case ObsSourceId::MotionPos: get_motion_pos_obs(segments[i]); break;
-            case ObsSourceId::MotionVel: get_motion_vel_obs(segments[i]); break;
-            case ObsSourceId::AngVel: get_ang_vel_obs(segments[i]); break;
-            case ObsSourceId::GravityB: get_gravity_b_obs(segments[i]); break;
-            case ObsSourceId::CmdVel: get_cmd_vel_obs(segments[i]); break;
-            case ObsSourceId::DofPos: get_dof_pos_obs(segments[i]); break;
-            case ObsSourceId::DofVel: get_dof_vel_obs(segments[i]); break;
-            case ObsSourceId::LastAction: get_last_action_obs(segments[i]); break;
-            case ObsSourceId::Interrupt: get_interrupt_obs(segments[i]); break;
-            case ObsSourceId::Perception: get_perception_obs(segments[i]); break;
-        }
+        (this->*(layout[i].source->get))(segments[i]);
     }
 }
 
