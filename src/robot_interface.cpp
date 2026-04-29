@@ -82,9 +82,13 @@ RobotInterface::RobotInterface(const std::string& config_file) {
 void RobotInterface::setup_motors(){
     size_t count = 0;
     motors_.resize(motors_cfg_->motor_id_.size());
-    for (size_t i = 0; i < motors_cfg_->motor_interface_.size(); ++i){
+    const size_t num_bus = motors_cfg_->motor_interface_.size();
+    const size_t lro_bus_count = (motors_cfg_->motor_type_ == "MIX") ? num_bus / 2 : 0;
+    for (size_t i = 0; i < num_bus; ++i){
+        const std::string& bus_type = (i < lro_bus_count) ? std::string("LRO") : std::string("EVO");
+        const std::string& type = (motors_cfg_->motor_type_ == "MIX") ? bus_type : motors_cfg_->motor_type_;
         for (size_t j = 0; j < motors_cfg_->motor_num_[i]; ++j){
-            motors_[count] = MotorDriver::create_motor(motors_cfg_->motor_id_[count], motors_cfg_->motor_interface_type_, motors_cfg_->motor_interface_[i], motors_cfg_->motor_type_, motors_cfg_->motor_model_[count], motors_cfg_->master_id_offset_, motors_cfg_->motor_zero_offset_[count]);
+            motors_[count] = MotorDriver::create_motor(motors_cfg_->motor_id_[count], motors_cfg_->motor_interface_type_, motors_cfg_->motor_interface_[i], type, motors_cfg_->motor_model_[count], motors_cfg_->master_id_offset_, motors_cfg_->motor_zero_offset_[count]);
             count += 1;
         }
     }
@@ -157,6 +161,40 @@ void RobotInterface::apply_action(std::vector<float> action) {
         }
     }
 
+    // One-to-Many (group broadcast) for EVO/LRO on CANFD
+    const bool is_mix = (motors_cfg_->motor_type_ == "MIX");
+    const size_t lro_bus_count = is_mix ? motors_cfg_->motor_interface_.size() / 2 : 0;
+    auto bus_type = [&](size_t bus) -> std::string {
+        return is_mix ? ((bus < lro_bus_count) ? "LRO" : "EVO") : motors_cfg_->motor_type_;
+    };
+    if (motors_cfg_->motor_interface_type_ == "canfd" && MotorDriver::get_group_can_id(bus_type(0)) != 0) {
+        size_t count = 0;
+        for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {
+            const size_t num_motors = motors_cfg_->motor_num_[bus];
+            float pos[8] = {}, vel[8] = {}, kp[8] = {}, kd[8] = {}, tau[8] = {};
+            for (size_t j = 0; j < num_motors; ++j) {
+                const size_t idx = count + j;
+                const long int motor_id = motors_cfg_->motor_id_[idx];
+                const size_t slot = (motor_id > 0 && motor_id <= 8) ? static_cast<size_t>(motor_id - 1) : j;
+                if (slot >= 8) continue;
+                const float signed_target = motor_target_[idx] * robot_cfg_->motor_sign_[idx];
+                if (std::find(close_chain_motor_idx_.begin(), close_chain_motor_idx_.end(), idx) == close_chain_motor_idx_.end()) {
+                    pos[slot] = signed_target;
+                    kp[slot] = robot_cfg_->kp_[idx];
+                    kd[slot] = robot_cfg_->kd_[idx];
+                } else {
+                    tau[slot] = signed_target;
+                }
+            }
+            if (num_motors > 0) {
+                motors_[count]->motor_mit_cmd(pos, vel, kp, kd, tau);
+            }
+            count += num_motors;
+        }
+        return;
+    }
+
+    // Fallback: per-motor individual commands
     exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
         if (std::find(close_chain_motor_idx_.begin(), close_chain_motor_idx_.end(), idx) == close_chain_motor_idx_.end()){
             motor->motor_mit_cmd(motor_target_[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx], robot_cfg_->kd_[idx], 0.0f);

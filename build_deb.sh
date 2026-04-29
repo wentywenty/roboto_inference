@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PACKAGE="roboto-inference"
-VERSION="1.0.1"
+VERSION="1.1.1"
 ARCH="$(dpkg --print-architecture)"
 PREFIX="/opt/roboparty"
 DEB_DIR="${PACKAGE}_${VERSION}_${ARCH}"
