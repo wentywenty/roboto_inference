@@ -216,7 +216,6 @@ void RobotInterface::refresh_joints() {
         });
 
         if (!close_chain_joint_idx_.empty()) {
-            std::vector<float> dummy_target(motors_cfg_->motor_id_.size(), 0.0f);
             Eigen::VectorXd q(2), vel(2), tau(2);
             int idx1 = close_chain_joint_idx_[0];
             int idx2 = close_chain_joint_idx_[1];
