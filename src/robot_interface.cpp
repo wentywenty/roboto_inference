@@ -1,4 +1,5 @@
 #include "robot_interface.hpp"
+#include "protocol/canfd/socket_canfd.hpp"
 
 RobotInterface::RobotInterface(const std::string& config_file) {
     YAML::Node config = YAML::LoadFile(config_file);
@@ -20,6 +21,7 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (motors_node["motor_zero_offset"]) motors_cfg_->motor_zero_offset_ = motors_node["motor_zero_offset"].as<std::vector<double>>();
         if (motors_node["master_id_offset"]) motors_cfg_->master_id_offset_ = motors_node["master_id_offset"].as<int>();
         if (motors_node["motor_type"]) motors_cfg_->motor_type_ = motors_node["motor_type"].as<std::string>();
+        if (motors_node["control_mode"]) motors_cfg_->control_mode_ = motors_node["control_mode"].as<std::string>();
         if (motors_node["motor_interface_type"]) motors_cfg_->motor_interface_type_ = motors_node["motor_interface_type"].as<std::string>();
         if (motors_node["motor_interface"]) motors_cfg_->motor_interface_ = motors_node["motor_interface"].as<std::vector<std::string>>();
         if (motors_node["motor_id"]) motors_cfg_->motor_id_ = motors_node["motor_id"].as<std::vector<long int>>();

@@ -18,6 +18,7 @@
 #include "utils/close_chain_mapping.hpp"
 #include "utils/thread_pool.hpp"
 #include "motor_driver.hpp"
+#include "protocol/group_canfd/canfd_group.hpp"
 #include "imu_driver.hpp"
 
 class RobotInterface {
@@ -34,7 +35,7 @@ class RobotInterface {
     };
     struct MotorsCfg{
         int master_id_offset_;
-        std::string motor_type_, motor_interface_type_;
+        std::string motor_type_, motor_interface_type_, control_mode_;
         std::vector<std::string> motor_interface_;
         std::vector<long int> motor_id_, motor_model_, motor_num_;
         std::vector<double> motor_zero_offset_;
@@ -110,6 +111,7 @@ class RobotInterface {
     std::vector<float> quat_buf_{0.f, 0.f, 0.f, 0.f};
     std::vector<float> ang_vel_buf_{0.f, 0.f, 0.f};
     std::vector<std::shared_ptr<MotorDriver>> motors_;
+    std::vector<std::shared_ptr<CanfdGroupManager>> canfd_group_managers_;
     std::unique_ptr<ThreadPool> thread_pool_;
 
     std::mutex motors_mutex_, joint_mutex_;
