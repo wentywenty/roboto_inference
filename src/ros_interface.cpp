@@ -1,22 +1,15 @@
 #include "inference_node.hpp"
 
 void InferenceNode::load_config() {
-    this->declare_parameter<std::string>("model_name", "1.onnx");
-    this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{"motion.npz"});
-    this->declare_parameter<std::vector<std::string>>("motion_model_names", std::vector<std::string>{"1.onnx"});
+    this->declare_parameter<std::vector<std::string>>("model_names", std::vector<std::string>{});
+    this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{});
+    this->declare_parameter<std::vector<std::string>>("obs_layouts", std::vector<std::string>{});
+    this->declare_parameter<std::vector<std::string>>("extra_obs_layouts", std::vector<std::string>{});
+    this->declare_parameter<std::vector<long int>>("frame_stacks", std::vector<long int>{});
+    this->declare_parameter<std::vector<std::string>>("obs_stack_orders", std::vector<std::string>{});
     this->declare_parameter<float>("act_alpha", 0.9);
-    this->declare_parameter<float>("gyro_alpha", 0.9);
-    this->declare_parameter<float>("angle_alpha", 0.9);
     this->declare_parameter<int>("intra_threads", -1);
-    this->declare_parameter<bool>("use_interrupt", false);
-    this->declare_parameter<bool>("use_beyondmimic", false);
-    this->declare_parameter<bool>("use_attn_enc", false);
-    this->declare_parameter<int>("obs_num", 78);
-    this->declare_parameter<int>("motion_obs_num", 121);
-    this->declare_parameter<int>("perception_obs_num", 187);
     this->declare_parameter<std::string>("perception_obs_topic", "elevation_data");
-    this->declare_parameter<int>("frame_stack", 15);
-    this->declare_parameter<int>("motion_frame_stack", 1);
     this->declare_parameter<int>("joint_num", 23);
     this->declare_parameter<int>("decimation", 10);
     this->declare_parameter<float>("dt", 0.001);
@@ -33,24 +26,21 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("joint_limits", std::vector<double>{});
     this->declare_parameter<float>("gravity_z_upper", -0.5);
-
-
-    this->get_parameter("model_name", model_name_);
-    this->get_parameter("motion_names", motion_names_);
-    this->get_parameter("motion_model_names", motion_model_names_);
+    std::vector<std::string> model_names;
+    std::vector<std::string> motion_names;
+    std::vector<std::string> obs_layouts;
+    std::vector<std::string> extra_obs_layouts;
+    std::vector<long int> frame_stacks;
+    std::vector<std::string> obs_stack_orders;
+    this->get_parameter("model_names", model_names);
+    this->get_parameter("motion_names", motion_names);
+    this->get_parameter("obs_layouts", obs_layouts);
+    this->get_parameter("extra_obs_layouts", extra_obs_layouts);
+    this->get_parameter("frame_stacks", frame_stacks);
+    this->get_parameter("obs_stack_orders", obs_stack_orders);
     this->get_parameter("act_alpha", act_alpha_);
-    this->get_parameter("gyro_alpha", gyro_alpha_);
-    this->get_parameter("angle_alpha", angle_alpha_);
     this->get_parameter("intra_threads", intra_threads_);
-    this->get_parameter("use_interrupt", use_interrupt_);
-    this->get_parameter("use_beyondmimic", use_beyondmimic_);
-    this->get_parameter("use_attn_enc", use_attn_enc_);
-    this->get_parameter("obs_num", obs_num_);
-    this->get_parameter("motion_obs_num", motion_obs_num_);
-    this->get_parameter("perception_obs_num", perception_obs_num_);
     this->get_parameter("perception_obs_topic", perception_obs_topic_);
-    this->get_parameter("frame_stack", frame_stack_);
-    this->get_parameter("motion_frame_stack", motion_frame_stack_);
     this->get_parameter("joint_num", joint_num_);
     this->get_parameter("decimation", decimation_);
     this->get_parameter("dt", dt_);
@@ -68,25 +58,87 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_limits", joint_limits_);
     this->get_parameter("gravity_z_upper", gravity_z_upper_);
 
-
-    model_path_ = std::string(ROOT_DIR) + "models/" + model_name_;
-    for(size_t i = 0; i < motion_names_.size(); i++){
-        motion_paths_.push_back(std::string(ROOT_DIR) + "motions/" + motion_names_[i]);
-        motion_model_paths_.push_back(std::string(ROOT_DIR) + "models/" + motion_model_names_[i]);
+    policies_.clear();
+    motion_policy_indices_.clear();
+    perception_obs_num_ = 0;
+    const size_t policy_count = model_names.size();
+    if (policy_count == 0) {
+        throw std::runtime_error("model_names must contain at least one policy");
     }
-    RCLCPP_INFO(this->get_logger(), "model_path: %s", model_path_.c_str());
-    for(size_t i = 0; i < motion_names_.size(); i++) {
-        RCLCPP_INFO(this->get_logger(), "motion_path %zu: %s", i, motion_paths_[i].c_str());
-        RCLCPP_INFO(this->get_logger(), "motion_model_path %zu: %s", i, motion_model_paths_[i].c_str());
+    const auto require_policy_count = [policy_count](const auto& values, const std::string& name) {
+        if (values.size() != policy_count) {
+            throw std::runtime_error(name + " must have the same size as model_names");
+        }
+    };
+    const auto require_empty_or_policy_count = [policy_count](const auto& values, const std::string& name) {
+        if (!values.empty() && values.size() != policy_count) {
+            throw std::runtime_error(name + " must be empty or have the same size as model_names");
+        }
+    };
+    require_policy_count(obs_layouts, "obs_layouts");
+    require_empty_or_policy_count(extra_obs_layouts, "extra_obs_layouts");
+    require_policy_count(frame_stacks, "frame_stacks");
+    require_policy_count(obs_stack_orders, "obs_stack_orders");
+    require_empty_or_policy_count(motion_names, "motion_names");
+
+    for (size_t i = 0; i < policy_count; i++) {
+        const std::string& policy_model_name = model_names[i];
+        const std::string policy_motion_name = motion_names.empty() ? "" : motion_names[i];
+        const std::string policy_extra_obs_layout = extra_obs_layouts.empty() ? "" : extra_obs_layouts[i];
+        const int policy_frame_stack = static_cast<int>(frame_stacks[i]);
+        const std::string& policy_obs_stack_order_name = obs_stack_orders[i];
+        if (policy_model_name.empty()) {
+            throw std::runtime_error("model_names[" + std::to_string(i) + "] must not be empty");
+        }
+        if (policy_frame_stack <= 0) {
+            throw std::runtime_error("frame_stacks[" + std::to_string(i) + "] must be positive");
+        }
+
+        PolicyRuntime policy;
+        policy.name = policy_model_name;
+        policy.model_path = std::string(ROOT_DIR) + "models/" + policy_model_name;
+        if (!policy_motion_name.empty()) {
+            policy.motion_path = std::string(ROOT_DIR) + "motions/" + policy_motion_name;
+        }
+        policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
+        policy.obs_layout_sizes.reserve(policy.obs_layout.size());
+        for (const ObsSourceSpec& source : policy.obs_layout) {
+            policy.obs_layout_sizes.push_back(source.size);
+            policy.obs_num += source.size;
+            if (source.name == "perception") {
+                perception_obs_num_ = source.size;
+            }
+        }
+        if (!policy_extra_obs_layout.empty()) {
+            policy.extra_obs_layout = parse_obs_layout(policy_extra_obs_layout, "extra_obs_layouts[" + std::to_string(i) + "]");
+            for (const ObsSourceSpec& source : policy.extra_obs_layout) {
+                policy.extra_obs_num += source.size;
+                if (source.name == "perception") {
+                    perception_obs_num_ = source.size;
+                }
+            }
+        }
+        policy.frame_stack = policy_frame_stack;
+        policy.stack_order = parse_obs_stack_order(policy_obs_stack_order_name);
+        if (!policy.motion_path.empty()) {
+            motion_policy_indices_.push_back(static_cast<int>(policies_.size()));
+        }
+        policies_.push_back(std::move(policy));
+    }
+
+    for(size_t i = 0; i < policies_.size(); i++) {
+        RCLCPP_INFO(this->get_logger(), "policy %zu: %s", i, policies_[i].name.c_str());
+        RCLCPP_INFO(this->get_logger(), "policy_model_path %zu: %s", i, policies_[i].model_path.c_str());
+        if (!policies_[i].motion_path.empty()) {
+            RCLCPP_INFO(this->get_logger(), "policy_motion_path %zu: %s", i, policies_[i].motion_path.c_str());
+        }
     }
     RCLCPP_INFO(this->get_logger(), "act_alpha: %f", act_alpha_);
-    RCLCPP_INFO(this->get_logger(), "gyro_alpha: %f", gyro_alpha_);
-    RCLCPP_INFO(this->get_logger(), "angle_alpha: %f", angle_alpha_);
     RCLCPP_INFO(this->get_logger(), "intra_threads: %d", intra_threads_);
-    RCLCPP_INFO(this->get_logger(), "use_interrupt: %s", use_interrupt_ ? "true" : "false");
-    RCLCPP_INFO(this->get_logger(), "use_beyondmimic: %s", use_beyondmimic_ ? "true" : "false");
-    RCLCPP_INFO(this->get_logger(), "obs_num: %d", obs_num_);
+    RCLCPP_INFO(this->get_logger(), "supports_interrupt: %s", has_obs_source("interrupt") ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "has_motion_policy: %s", motion_policy_indices_.empty() ? "false" : "true");
     RCLCPP_INFO(this->get_logger(), "perception_obs_num: %d", perception_obs_num_);
+    print_vector<std::string>("extra_obs_layouts", extra_obs_layouts);
     RCLCPP_INFO(this->get_logger(), "perception_obs_topic: %s", perception_obs_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "joint_num: %d", joint_num_);
     RCLCPP_INFO(this->get_logger(), "decimation: %d", decimation_);
@@ -120,7 +172,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if ((msg->buttons[2] == 1 && msg->buttons[2] != last_button0_)) {
         if(is_running_.load()){
-            reset();
+            reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
         }
         if (robot_->is_init_.load()){
@@ -133,7 +185,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (msg->buttons[0] == 1 && msg->buttons[0] != last_button1_) {
         if (is_running_.load()){
-            reset();
+            reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
         }
         if (!robot_->is_init_.load()){
@@ -151,63 +203,56 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         is_joy_control_.store(!is_joy_control_);
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
-    if (use_interrupt_ || use_beyondmimic_) {
+    if (supports_interrupt() || has_motion_policy()) {
         if (msg->buttons[4] == 1 && msg->buttons[4] != last_button4_) {
-            bool restore_flag = false;
-            if (use_interrupt_) {
-                if (is_running_.load()){
-                    restore_flag = true;
-                    is_running_.store(false);
+            const auto switch_while_paused = [this](auto&& switch_mode) {
+                std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
+                const bool restore_running = is_running_.exchange(false);
+                if (restore_running) {
                     RCLCPP_INFO(this->get_logger(), "Inference paused");
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                is_interrupt_.store(!is_interrupt_.load());
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
-                if (restore_flag){
+                try {
+                    switch_mode();
+                } catch (...) {
+                    if (restore_running) {
+                        is_running_.store(true);
+                        RCLCPP_INFO(this->get_logger(), "Inference started");
+                    }
+                    throw;
+                }
+                if (restore_running) {
                     is_running_.store(true);
                     RCLCPP_INFO(this->get_logger(), "Inference started");
                 }
-            } else if (use_beyondmimic_) {
-                if (is_running_.load()){
-                    restore_flag = true;
-                    is_running_.store(false);
-                    RCLCPP_INFO(this->get_logger(), "Inference paused");
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                is_beyondmimic_.store(!is_beyondmimic_.load());
-                bool is_beyondmimic = is_beyondmimic_.load();
-                active_ctx_ = is_beyondmimic ? motion_ctxs_[current_motion_idx_].get() : normal_ctx_.get();
-                int obs_num = is_beyondmimic ? motion_obs_num_ : obs_num_;
-                obs_.resize(obs_num);
-                std::fill(obs_.begin(), obs_.end(), 0.0f);
-                std::fill(motion_pos_.begin(), motion_pos_.end(), 0.0f);
-                std::fill(motion_vel_.begin(), motion_vel_.end(), 0.0f);
-                std::fill(active_ctx_->input_buffer.begin(), active_ctx_->input_buffer.end(), 0.0f);
-                std::fill(active_ctx_->output_buffer.begin(), active_ctx_->output_buffer.end(), 0.0f);
-                is_first_frame_ = true;
-                motion_frame_ = 0;
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                if (is_beyondmimic) {
-                    RCLCPP_INFO(this->get_logger(), "Beyondmimic mode enabled: %s", motion_names_[current_motion_idx_].c_str());
-                } else {
-                    RCLCPP_INFO(this->get_logger(), "Beyondmimic mode disabled");
-                }
-                if (restore_flag){
-                    is_running_.store(true);
-                    RCLCPP_INFO(this->get_logger(), "Inference started");
-                }
+            };
+            if (supports_interrupt()) {
+                switch_while_paused([this]() {
+                    std::unique_lock<std::mutex> lock(mode_mutex_);
+                    is_interrupt_.store(!is_interrupt_.load());
+                    RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
+                });
+            } else if (has_motion_policy()) {
+                switch_while_paused([this]() {
+                    std::string policy_name;
+                    std::unique_lock<std::mutex> lock(mode_mutex_);
+                    is_motion_policy_.store(!is_motion_policy_.load());
+                    active_policy_idx_ = is_motion_policy_.load() ? motion_policy_indices_[current_motion_policy_idx_] : 0;
+                    reset_policy_runtime(active_policy());
+                    policy_name = active_policy().name;
+                    RCLCPP_INFO(this->get_logger(), "Policy enabled: %s", policy_name.c_str());
+                });
             }
         }
         last_button4_ = msg->buttons[4];
     }
-    if (use_beyondmimic_) {
+    if (has_motion_policy()) {
         if (msg->buttons[5] == 1 && msg->buttons[5] != last_button5_) {
-            if (is_beyondmimic_.load()) {
-                RCLCPP_WARN(this->get_logger(), "Cannot switch motion sequence while in beyondmimic mode");
+            std::unique_lock<std::mutex> lock(mode_mutex_);
+            if (is_motion_policy_.load()) {
+                RCLCPP_WARN(this->get_logger(), "Cannot switch motion policy while in motion policy mode");
             } else {
-                current_motion_idx_ = (current_motion_idx_ + 1) % motion_names_.size();
-                RCLCPP_INFO(this->get_logger(), "Selected motion: %s", motion_names_[current_motion_idx_].c_str());
+                current_motion_policy_idx_ = (current_motion_policy_idx_ + 1) % motion_policy_indices_.size();
+                RCLCPP_INFO(this->get_logger(), "Selected policy: %s", policies_[motion_policy_indices_[current_motion_policy_idx_]].name.c_str());
             }
         }
         last_button5_ = msg->buttons[5];
@@ -228,16 +273,19 @@ void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::
 }
 
 void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg){
-    if(use_attn_enc_){
+    if(perception_obs_num_ > 0){
         std::unique_lock<std::mutex> lock(perception_mutex_);
-        for(int i = 0; i < perception_obs_num_; i++){
-            perception_obs_[i] = msg->data[i];
+        if (msg->data.size() < perception_obs_buffer_.size()) {
+            RCLCPP_WARN(this->get_logger(), "Perception obs message too small: got %zu, expected %zu", msg->data.size(), perception_obs_buffer_.size());
+            std::fill(perception_obs_buffer_.begin(), perception_obs_buffer_.end(), 0.0f);
+            return;
         }
+        std::copy(msg->data.begin(), msg->data.begin() + perception_obs_buffer_.size(), perception_obs_buffer_.begin());
     }
 }
 
 void InferenceNode::subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg){
-    if(use_interrupt_ && is_interrupt_.load()){
+    if(supports_interrupt() && is_interrupt_.load()){
         std::unique_lock<std::mutex> lock(interrupt_mutex_);
         for(size_t i = 0; i < interrupt_action_.size(); i++){
             interrupt_action_[i] = msg->position[i];
@@ -294,7 +342,6 @@ void InferenceNode::read_joints_srv(const std::shared_ptr<std_srvs::srv::Trigger
     try {
         response->success = true;
         response->message = "Joints read successfully";
-        read_joints();
         publish_joint_states();
     } catch (const std::exception& e) {
         response->success = false;
@@ -312,7 +359,6 @@ void InferenceNode::read_imu_srv(const std::shared_ptr<std_srvs::srv::Trigger::R
     try {
         response->success = true;
         response->message = "IMU read successfully";
-        read_imu();
         publish_imu();
     } catch (const std::exception& e) {
         response->success = false;
@@ -418,11 +464,15 @@ void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trig
 }
 
 void InferenceNode::publish_joint_states() {
+    joint_pos_buffer_ = robot_->get_joint_q();
+    joint_vel_buffer_ = robot_->get_joint_vel();
+    joint_torques_buffer_ = robot_->get_joint_tau();
     joint_state_msg_.header.stamp = this->now();
+    joint_state_msg_.effort.resize(joint_num_);
     for (int i = 0; i < joint_num_; i++) {
-        joint_state_msg_.position[i] = joint_pos_[i];
-        joint_state_msg_.velocity[i] = joint_vel_[i];
-        joint_state_msg_.effort[i] = joint_torques_[i];
+        joint_state_msg_.position[i] = joint_pos_buffer_[i];
+        joint_state_msg_.velocity[i] = joint_vel_buffer_[i];
+        joint_state_msg_.effort[i] = joint_torques_buffer_[i];
     }
     joint_state_publisher_->publish(joint_state_msg_);
 }
@@ -436,14 +486,16 @@ void InferenceNode::publish_action() {
 }
 
 void InferenceNode::publish_imu() {
+    quat_buffer_ = robot_->get_quat();
+    ang_vel_buffer_ = robot_->get_ang_vel();
     auto msg = sensor_msgs::msg::Imu();
     msg.header.stamp = this->now();
-    msg.orientation.w = quat_[0];
-    msg.orientation.x = quat_[1];
-    msg.orientation.y = quat_[2];
-    msg.orientation.z = quat_[3];
-    msg.angular_velocity.x = ang_vel_[0];
-    msg.angular_velocity.y = ang_vel_[1];
-    msg.angular_velocity.z = ang_vel_[2];
+    msg.orientation.w = quat_buffer_[0];
+    msg.orientation.x = quat_buffer_[1];
+    msg.orientation.y = quat_buffer_[2];
+    msg.orientation.z = quat_buffer_[3];
+    msg.angular_velocity.x = ang_vel_buffer_[0];
+    msg.angular_velocity.y = ang_vel_buffer_[1];
+    msg.angular_velocity.z = ang_vel_buffer_[2];
     imu_publisher_->publish(msg);
 }
