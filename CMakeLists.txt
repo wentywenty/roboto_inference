@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(inference)
+project(roboto_inference)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
@@ -21,8 +21,8 @@ find_package(Boost COMPONENTS system)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-find_package(motors REQUIRED)
-find_package(imu REQUIRED)
+find_package(roboto_motors REQUIRED)
+find_package(roboto_imu REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 
@@ -61,8 +61,10 @@ target_include_directories(robot
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-target_link_libraries(robot PUBLIC ${PUBLIC_DEPENDENCIES} utils)
-ament_target_dependencies(robot PUBLIC imu motors)
+target_link_libraries(robot PUBLIC ${PUBLIC_DEPENDENCIES} utils
+  roboto_motors::roboto_motors
+  roboto_imu::roboto_imu
+)
 
 pybind11_add_module(robot_py src/pybind_module.cpp)
 target_link_libraries(robot_py PUBLIC robot)
