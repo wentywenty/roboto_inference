@@ -1,4 +1,5 @@
 #include "robot_interface.hpp"
+#include <yaml-cpp/yaml.h>
 
 RobotInterface::RobotInterface(const std::string& config_file) {
     YAML::Node config = YAML::LoadFile(config_file);
@@ -167,7 +168,7 @@ void RobotInterface::apply_action(std::vector<float> action) {
     auto bus_type = [&](size_t bus) -> std::string {
         return is_mix ? ((bus < lro_bus_count) ? "LRO" : "EVO") : motors_cfg_->motor_type_;
     };
-    if (motors_cfg_->motor_interface_type_ == "canfd" && MotorDriver::get_group_can_id(bus_type(0)) != 0) {
+    if (motors_cfg_->motor_interface_type_ == "canfd") {
         size_t count = 0;
         for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {
             const size_t num_motors = motors_cfg_->motor_num_[bus];

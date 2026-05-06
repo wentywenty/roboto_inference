@@ -14,7 +14,6 @@
 #include <iostream>
 #include <queue>
 #include <sstream>
-#include <yaml-cpp/yaml.h>
 #include "utils/close_chain_mapping.hpp"
 #include "utils/thread_pool.hpp"
 #include "motor_driver.hpp"

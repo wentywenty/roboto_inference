@@ -10,7 +10,30 @@ PACKAGE="roboto-inference"
 VERSION="1.1.1"
 ARCH="$(dpkg --print-architecture)"
 PREFIX="/opt/roboparty"
+PKG_NAME="roboto-inference"
 DEB_DIR="${PACKAGE}_${VERSION}_${ARCH}"
+
+# Thirdparty dependencies (auto-extract if archives exist)
+# ONNX Runtime
+ONNXRT_X64="thirdparty/onnxruntime-linux-x64-1.21.0"
+ONNXRT_ARM64="thirdparty/onnxruntime-linux-aarch64-1.21.0"
+# wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-linux-x64-1.21.0.tgz -O thirdparty/onnxruntime-linux-x64-1.21.0.tgz
+# wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-linux-aarch64-1.21.0.tgz -O thirdparty/onnxruntime-linux-aarch64-1.21.0.tgz
+if [ ! -d "$ONNXRT_X64" ] && [ -f "thirdparty/onnxruntime-linux-x64-1.21.0.tgz" ]; then
+    echo ">>> Extracting onnxruntime x64..."
+    mkdir -p "$ONNXRT_X64" && tar xzf thirdparty/onnxruntime-linux-x64-1.21.0.tgz -C "$ONNXRT_X64" --strip-components=1
+fi
+if [ ! -d "$ONNXRT_ARM64" ] && [ -f "thirdparty/onnxruntime-linux-aarch64-1.21.0.tgz" ]; then
+    echo ">>> Extracting onnxruntime aarch64..."
+    mkdir -p "$ONNXRT_ARM64" && tar xzf thirdparty/onnxruntime-linux-aarch64-1.21.0.tgz -C "$ONNXRT_ARM64" --strip-components=1
+fi
+
+# yaml-cpp
+# wget -q https://github.com/jbeder/yaml-cpp/releases/download/yaml-cpp-0.9.0/yaml-cpp-yaml-cpp-0.9.0.tar.gz -O thirdparty/yaml-cpp-0.9.0.tar.gz
+if [ ! -d "thirdparty/yaml-cpp-0.9.0" ] && [ -f "thirdparty/yaml-cpp-0.9.0.tar.gz" ]; then
+    echo ">>> Extracting yaml-cpp..."
+    mkdir -p thirdparty/yaml-cpp-0.9.0 && tar xzf thirdparty/yaml-cpp-0.9.0.tar.gz -C thirdparty/yaml-cpp-0.9.0 --strip-components=1
+fi
 
 # Source ROS 2 (Always required for inference)
 ROS_SOURCED=0
@@ -47,17 +70,40 @@ mkdir -p "${DEB_DIR}/DEBIAN"
 if [ -d "build/destdir${PREFIX}" ]; then
     mkdir -p "${DEB_DIR}${PREFIX}"
     cp -a "build/destdir${PREFIX}/." "${DEB_DIR}${PREFIX}/"
+    # Remove cnpy helper scripts
+    rm -f "${DEB_DIR}${PREFIX}/bin/mat2npz" "${DEB_DIR}${PREFIX}/bin/npy2mat" "${DEB_DIR}${PREFIX}/bin/npz2mat"
+fi
+
+# Fix .so permissions and symlinks
+LIB_DIR="${DEB_DIR}${PREFIX}/lib"
+if [ -d "$LIB_DIR" ]; then
+    chmod +x "$LIB_DIR"/*.so* 2>/dev/null || true
+    # Fix onnxruntime symlinks
+    if [ -f "$LIB_DIR/libonnxruntime.so.1.21.0" ]; then
+        ln -sf libonnxruntime.so.1.21.0 "$LIB_DIR/libonnxruntime.so.1"
+        ln -sf libonnxruntime.so.1.21.0 "$LIB_DIR/libonnxruntime.so"
+    fi
+fi
+
+# Reorganize config: inference*.yaml -> config/inference/, robot*.yaml -> config/robot/
+CONFIG_DIR="${DEB_DIR}${PREFIX}/share/${PKG_NAME}/config"
+if [ -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR/inference" "$CONFIG_DIR/robot"
+    mv "$CONFIG_DIR"/inference*.yaml "$CONFIG_DIR/inference/" 2>/dev/null || true
+    mv "$CONFIG_DIR"/robot*.yaml "$CONFIG_DIR/robot/" 2>/dev/null || true
 fi
 
 # Install models and motions (not handled by cmake install)
 if [ -d "models" ]; then
-    mkdir -p "${DEB_DIR}${PREFIX}/share/inference/models"
-    cp models/*.onnx "${DEB_DIR}${PREFIX}/share/inference/models/" 2>/dev/null || true
+    mkdir -p "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/models"
+    cp models/*.onnx "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/models/" 2>/dev/null || true
+    chmod 644 "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/models/"*.onnx 2>/dev/null || true
 fi
 
 if [ -d "motions" ]; then
-    mkdir -p "${DEB_DIR}${PREFIX}/share/inference/motions"
-    cp motions/*.npz "${DEB_DIR}${PREFIX}/share/inference/motions/" 2>/dev/null || true
+    mkdir -p "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/motions"
+    cp motions/*.npz "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/motions/" 2>/dev/null || true
+    chmod 644 "${DEB_DIR}${PREFIX}/share/${PKG_NAME}/motions/"*.npz 2>/dev/null || true
 fi
 
 # Copy DEBIAN maintainer scripts

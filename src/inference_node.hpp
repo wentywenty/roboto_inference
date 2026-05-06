@@ -87,7 +87,9 @@ class InferenceNode : public rclcpp::Node {
     InferenceNode() : Node("inference_node") {
         load_config();
 
-        robot_ = std::make_shared<RobotInterface>(std::string(ROOT_DIR) + "config/robot.yaml");
+        std::string robot_config_path;
+        this->get_parameter("robot_config", robot_config_path);
+        robot_ = std::make_shared<RobotInterface>(robot_config_path);
 
         Ort::ThreadingOptions thread_opts;
         if (intra_threads_ > 0) {

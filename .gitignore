@@ -1,47 +1,4 @@
-#environment
 .vscode
-
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Media
-*.jpg
-*.png
-*.jpeg
-*.avi
-*.mp4
-*.pcd
-map
-
-# Executables
-*.exe
-*.out
-*.app
-bin
 build
 /data/video/
 /data/pic/
@@ -52,3 +9,4 @@ temp
 cmake-build-debug
 .idea
 log
+thirdparty/yaml-cpp-0.9.0

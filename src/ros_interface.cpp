@@ -1,6 +1,7 @@
 #include "inference_node.hpp"
 
 void InferenceNode::load_config() {
+    this->declare_parameter<std::string>("robot_config", std::string(ROOT_DIR) + "config/robot.yaml");
     this->declare_parameter<std::vector<std::string>>("model_names", std::vector<std::string>{});
     this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{});
     this->declare_parameter<std::vector<std::string>>("obs_layouts", std::vector<std::string>{});
