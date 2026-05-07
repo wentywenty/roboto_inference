@@ -1,10 +1,21 @@
-Package: roboto-inference
-Version: VERSION_PLACEHOLDER
+Source: roboto-inference
 Section: misc
 Priority: optional
-Architecture: ARCH_PLACEHOLDER
-Depends: roboto-base (>= 1.0.0), roboto-motors (>= 1.2.0), roboto-imu (>= 1.1.1)
 Maintainer: RoboParty <ZhihaoLiu_hit@163.com>
+Build-Depends: debhelper-compat (= 12), cmake, pkg-config,
+               libspdlog-dev, libfmt-dev, libboost-all-dev,
+               python3-dev, pybind11-dev,
+               ros-humble-rclcpp, ros-humble-sensor-msgs,
+               ros-humble-geometry-msgs, ros-humble-std-srvs,
+               roboto-motors, roboto-imu, roboto-bms
+
+Package: roboto-inference
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         roboto-base (>= 1.0.0), roboto-motors (>= 1.2.0),
+         roboto-imu (>= 1.1.1),
+         ros-humble-rclcpp, ros-humble-sensor-msgs,
+         ros-humble-geometry-msgs, ros-humble-std-srvs
 Description: RoboParty inference node
  ROS 2 humanoid robot control node with ONNX Runtime policy inference.
  Includes ONNX models, motion data, config files, launch scripts

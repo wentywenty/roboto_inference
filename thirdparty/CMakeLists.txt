@@ -59,25 +59,25 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(yaml-cpp)
 
 # --- cnpy ---
-add_subdirectory(cnpy)
-if(TARGET cnpy)
-    target_include_directories(cnpy PUBLIC ${CMAKE_CURRENT_LIST_DIR}/cnpy)
-endif()
-if(TARGET cnpy-static)
-    target_include_directories(cnpy-static PUBLIC ${CMAKE_CURRENT_LIST_DIR}/cnpy)
-endif()
+find_package(ZLIB REQUIRED)
+
+add_library(cnpy SHARED "cnpy/cnpy.cpp")
+target_include_directories(cnpy PUBLIC ${CMAKE_CURRENT_LIST_DIR}/cnpy ${ZLIB_INCLUDE_DIRS})
+target_link_libraries(cnpy ${ZLIB_LIBRARIES})
+
+add_library(cnpy-static STATIC "cnpy/cnpy.cpp")
+set_target_properties(cnpy-static PROPERTIES OUTPUT_NAME "cnpy")
+target_include_directories(cnpy-static PUBLIC ${CMAKE_CURRENT_LIST_DIR}/cnpy ${ZLIB_INCLUDE_DIRS})
+
+install(TARGETS "cnpy" LIBRARY DESTINATION lib PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+install(TARGETS "cnpy-static" ARCHIVE DESTINATION lib)
+install(FILES "cnpy/cnpy.h" DESTINATION include)
+
 set(CNPY_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/cnpy" PARENT_SCOPE)
 
-# Don't build yaml-cpp tools (sandbox, parse, read) and cnpy example1
-foreach(_tgt yaml-cpp-sandbox yaml-cpp-parse yaml-cpp-read example1)
+# Don't build yaml-cpp tools (sandbox, parse, read)
+foreach(_tgt yaml-cpp-sandbox yaml-cpp-parse yaml-cpp-read)
     if(TARGET ${_tgt})
         set_target_properties(${_tgt} PROPERTIES EXCLUDE_FROM_ALL TRUE)
     endif()
 endforeach()
-
-# cnpy: remove helper scripts after install
-install(CODE "
-    foreach(SCRIPT mat2npz npy2mat npz2mat)
-        file(REMOVE \"\${CMAKE_INSTALL_PREFIX}/bin/\${SCRIPT}\")
-    endforeach()
-")

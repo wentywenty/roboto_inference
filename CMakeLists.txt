@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(roboto-inference)
+
+file(READ "package.xml" PACKAGE_XML_CONTENT)
+string(REGEX MATCH "<version>([0-9\\.]+)</version>" _ ${PACKAGE_XML_CONTENT})
+project(roboto-inference VERSION ${CMAKE_MATCH_1})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 set(CMAKE_CXX_COMPILER_LAUNCHER ccache)

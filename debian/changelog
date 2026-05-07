@@ -1,0 +1,11 @@
+roboto-inference (1.1.2-1) stable; urgency=medium
+
+  * Update standard deb package and cmake scripts and thirdparty
+
+ -- wentywenty <2321901849@qq.com>  Thu, 07 May 2026 17:26:02 +0800
+
+roboto-inference (1.1.1-1) unstable; urgency=medium
+
+  * Initial standard Debian package release.
+
+ -- RoboParty <ZhihaoLiu_hit@163.com>  Thu, 07 May 2026 00:00:00 +0000

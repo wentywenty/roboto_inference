@@ -1,18 +1,20 @@
-name: Build roboto-inference Debian Package (Native ARM64)
+name: Build Roboto Inference Debian Package
 
 on:
   push:
-    branches: [ "main", "master", "2.0.0" ]
-  pull_request:
-    branches: [ "main", "master", "2.0.0" ]
 
 jobs:
-  build_arm64:
-    runs-on: ubuntu-22.04-arm
-    name: Build on Native ARM64
-    
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-22.04
+          - arch: arm64
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -26,56 +28,60 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apt-cache
-          key: ${{ runner.os }}-arm64-apt-${{ hashFiles('.github/workflows/build-deb.yml') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-apt-${{ hashFiles('.github/workflows/build-deb.yml') }}
           restore-keys: |
-            ${{ runner.os }}-arm64-apt-
+            ${{ runner.os }}-${{ matrix.arch }}-apt-
 
-      - name: Install System Dependencies
+      - name: Install build dependencies
         run: |
           mkdir -p apt-cache/partial
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             -o dir::cache::archives="$PWD/apt-cache" \
-            build-essential cmake git wget python3-pip python3-vcstool \
-            libboost-all-dev libspdlog-dev libfmt-dev python3-dev gh ccache
+            build-essential cmake ccache dpkg-dev debhelper devscripts \
+            git wget python3-pip python3-vcstool \
+            libboost-all-dev libspdlog-dev libfmt-dev python3-dev pybind11-dev gh
           
           # Fix permissions for cache saving
           sudo chown -R $(id -u):$(id -g) apt-cache
-            
-          # Install pybind11 which is required by CMakeLists.txt
-          pip3 install pybind11
 
-      - name: Download Dependencies (Releases)
+      - name: Download Roboto Dependencies
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p debs
           cd debs
           
-          echo ">>> Downloading latest ARM64 releases..."
-          # Note: Assuming repositories have *arm64.deb releases
+          echo ">>> Downloading latest ${{ matrix.arch }} releases..."
           
           gh release download --repo wentywenty/roboto_base   --pattern "*all.deb" || echo "Failed roboto_base"
-          gh release download --repo wentywenty/roboto_imu    --pattern "*arm64.deb" || echo "Failed roboto_imu"
-          gh release download --repo wentywenty/roboto_motors --pattern "*arm64.deb" || echo "Failed roboto_motors"
-          gh release download --repo wentywenty/roboto_bms    --pattern "*arm64.deb" || echo "Failed roboto_bms"
+          gh release download --repo wentywenty/roboto_imu    --pattern "*${{ matrix.arch }}.deb" || echo "Failed roboto_imu"
+          gh release download --repo wentywenty/roboto_motors --pattern "*${{ matrix.arch }}.deb" || echo "Failed roboto_motors"
+          gh release download --repo wentywenty/roboto_bms    --pattern "*${{ matrix.arch }}.deb" || echo "Failed roboto_bms"
           
           ls -lh
 
-      - name: Install Dependencies
+      - name: Install Roboto Dependencies
         run: |
-          cd debs && sudo apt-get install -y ./*.deb || echo "Warning: apt-get install returned error, attempting fix-broken"
-          sudo apt-get install -f -y
+          cd debs && sudo dpkg -i ./*.deb || sudo apt-get install -f -y
 
-      - name: Build roboto-inference Debian Package
+      - name: Build deb package
         run: |
-          chmod +x build_deb.sh
           # Source ROS 2 explicitly to be safe
           . /opt/ros/humble/setup.sh
-          ./build_deb.sh
+          dpkg-buildpackage -us -uc -b
+          mv ../*.deb .
+          VERSION=$(dpkg-parsechangelog -S Version | cut -d'-' -f1 || echo "unknown")
+          echo "PKG_VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Upload Artifact
+      - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: roboto-inference-arm64-deb
+          name: roboto-inference-v${{ env.PKG_VERSION }}-${{ matrix.arch }}
           path: "*.deb"
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.deb"
