@@ -1,4 +1,4 @@
-name: Build Roboto Inference Debian Package
+name: Build Roboto Inference Deb Package
 
 on:
   push:
