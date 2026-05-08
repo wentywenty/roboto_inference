@@ -4,6 +4,7 @@ export AMENT_PREFIX_PATH=/opt/ros/humble
 export CMAKE_PREFIX_PATH=/opt/roboparty:/opt/ros/humble
 export PYTHONPATH=/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages
 export LD_LIBRARY_PATH := /opt/ros/humble/lib:$(LD_LIBRARY_PATH)
+export CCACHE_DISABLE = 1
 
 PKG_NAME = roboto-inference
 

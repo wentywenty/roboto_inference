@@ -13,9 +13,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_TYPE Release)
 
-add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
-
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -73,7 +72,7 @@ target_include_directories(inference_node
   ${CNPY_INCLUDE_DIR}
 )
 target_link_libraries(inference_node PUBLIC ${PUBLIC_DEPENDENCIES} utils robot)
-ament_target_dependencies(inference_node PUBLIC rclcpp sensor_msgs geometry_msgs std_srvs)
+ament_target_dependencies(inference_node PUBLIC rclcpp sensor_msgs geometry_msgs std_srvs ament_index_cpp)
 
 set_target_properties(inference_node PROPERTIES LINK_FLAGS "-Wl,--no-as-needed")
 
