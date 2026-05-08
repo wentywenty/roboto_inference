@@ -1,6 +1,9 @@
 #include "inference_node.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 void InferenceNode::load_config() {
+    std::string package_share_dir = ament_index_cpp::get_package_share_directory("roboto-inference") + "/";
+    this->declare_parameter<std::string>("robot_config", package_share_dir + "config/robot.yaml");
     this->declare_parameter<std::vector<std::string>>("model_names", std::vector<std::string>{});
     this->declare_parameter<std::vector<std::string>>("motion_names", std::vector<std::string>{});
     this->declare_parameter<std::vector<std::string>>("obs_layouts", std::vector<std::string>{});
@@ -96,9 +99,9 @@ void InferenceNode::load_config() {
 
         PolicyRuntime policy;
         policy.name = policy_model_name;
-        policy.model_path = std::string(ROOT_DIR) + "models/" + policy_model_name;
+        policy.model_path = package_share_dir + "models/" + policy_model_name;
         if (!policy_motion_name.empty()) {
-            policy.motion_path = std::string(ROOT_DIR) + "motions/" + policy_motion_name;
+            policy.motion_path = package_share_dir + "motions/" + policy_motion_name;
         }
         policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
         policy.obs_layout_sizes.reserve(policy.obs_layout.size());

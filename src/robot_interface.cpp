@@ -1,4 +1,5 @@
 #include "robot_interface.hpp"
+#include <yaml-cpp/yaml.h>
 
 RobotInterface::RobotInterface(const std::string& config_file) {
     YAML::Node config = YAML::LoadFile(config_file);
