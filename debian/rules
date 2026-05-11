@@ -6,9 +6,17 @@ export PYTHONPATH=/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/l
 export LD_LIBRARY_PATH := /opt/ros/humble/lib:$(LD_LIBRARY_PATH)
 export CCACHE_DISABLE = 1
 
-# 强制指定为 armv8.2-a，这是 RK3588 安全兼容的版本
-export DEB_CXXFLAGS_MAINT_APPEND = -march=armv8.2-a -mno-outline-atomics
-export DEB_CMAKE_EXTRA_FLAGS = -DCMAKE_CXX_FLAGS="-march=armv8.2-a -mno-outline-atomics"
+# 1. 检测架构
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+# 2. 根据架构设置不同的编译参数
+# 如果是 ARM64 (RK3588), 使用特定指令集优化
+ifeq ($(DEB_HOST_ARCH), arm64)
+    CXX_FLAGS = -march=armv8.2-a -mno-outline-atomics
+else
+    # 如果是 x86_64 或其他，留空或使用通用参数
+    CXX_FLAGS = 
+endif
 
 PKG_NAME = roboto-inference
 
@@ -31,7 +39,7 @@ override_dh_auto_configure:
 		-DCMAKE_INSTALL_PREFIX=/opt/roboparty \
 		-DCMAKE_PREFIX_PATH="/opt/roboparty;/opt/ros/humble" \
 		-DCMAKE_BUILD_TYPE=Release \
-		$(DEB_CMAKE_EXTRA_FLAGS)
+		-DCMAKE_CXX_FLAGS="$(CXX_FLAGS)"
 
 override_dh_install:
 	dh_install
