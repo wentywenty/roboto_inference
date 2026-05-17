@@ -11,7 +11,7 @@ motors:
          7, 8, 9, 10, 11, 12, 13,
          14, 15, 16, 17, 18,
          19, 20, 21, 22, 23]
-    motor_interface_type: "can"
+    motor_interface_type: ["can", "can", "can", "can"]
     motor_interface: ["can0", "can1", "can2", "can3"]
     motor_num: [6, 7, 5, 5]
     motor_type: ["DM", "DM", "DM", "DM"]

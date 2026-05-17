@@ -35,7 +35,7 @@ class RobotInterface {
     struct MotorsCfg{
         int master_id_offset_;
         std::vector<std::string> motor_type_;
-        std::string motor_interface_type_;
+        std::vector<std::string> motor_interface_type_;
         std::vector<std::string> motor_interface_;
         std::vector<long int> motor_id_, motor_model_, motor_num_;
         std::vector<double> motor_zero_offset_;
@@ -121,4 +121,5 @@ class RobotInterface {
     void setup_imu();
 
     void exec_motors_parallel(const std::function<void(std::shared_ptr<MotorDriver>&, int)>& cmd_func);
+    void motors_mit_cmd(float kp_scale = 1.0f, float kd_scale = 1.0f, bool close_chain_tau = false);
 };

@@ -20,7 +20,7 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (motors_node["motor_zero_offset"]) motors_cfg_->motor_zero_offset_ = motors_node["motor_zero_offset"].as<std::vector<double>>();
         if (motors_node["master_id_offset"]) motors_cfg_->master_id_offset_ = motors_node["master_id_offset"].as<int>();
         if (motors_node["motor_type"]) motors_cfg_->motor_type_ = motors_node["motor_type"].as<std::vector<std::string>>();
-        if (motors_node["motor_interface_type"]) motors_cfg_->motor_interface_type_ = motors_node["motor_interface_type"].as<std::string>();
+        if (motors_node["motor_interface_type"]) motors_cfg_->motor_interface_type_ = motors_node["motor_interface_type"].as<std::vector<std::string>>();
         if (motors_node["motor_interface"]) motors_cfg_->motor_interface_ = motors_node["motor_interface"].as<std::vector<std::string>>();
         if (motors_node["motor_id"]) motors_cfg_->motor_id_ = motors_node["motor_id"].as<std::vector<long int>>();
         if (motors_node["motor_model"]) motors_cfg_->motor_model_ = motors_node["motor_model"].as<std::vector<long int>>();
@@ -81,7 +81,7 @@ void RobotInterface::setup_motors(){
     motors_.resize(motors_cfg_->motor_id_.size());
     for (size_t i = 0; i < motors_cfg_->motor_interface_.size(); ++i){
         for (size_t j = 0; j < motors_cfg_->motor_num_[i]; ++j){
-            motors_[count] = MotorDriver::create_motor(motors_cfg_->motor_id_[count], motors_cfg_->motor_interface_type_, motors_cfg_->motor_interface_[i], motors_cfg_->motor_type_[i], motors_cfg_->motor_model_[count], motors_cfg_->master_id_offset_, motors_cfg_->motor_zero_offset_[count]);
+            motors_[count] = MotorDriver::create_motor(motors_cfg_->motor_id_[count], motors_cfg_->motor_interface_type_[i], motors_cfg_->motor_interface_[i], motors_cfg_->motor_type_[i], motors_cfg_->motor_model_[count], motors_cfg_->master_id_offset_, motors_cfg_->motor_zero_offset_[count]);
             count += 1;
         }
     }
@@ -154,43 +154,7 @@ void RobotInterface::apply_action(std::vector<float> action) {
         }
     }
 
-    if (motors_cfg_->motor_interface_type_ == "canfd") {
-        std::unique_lock<std::mutex> lock(motors_mutex_);
-        std::vector<std::function<void()>> tasks;
-        size_t count = 0;
-        for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {
-            const size_t num_motors = motors_cfg_->motor_num_[bus];
-            const size_t start_count = count;
-            tasks.push_back([this, start_count, num_motors]() {
-                float pos[8] = {}, vel[8] = {}, kp[8] = {}, kd[8] = {}, tau[8] = {};
-                for (size_t j = 0; j < num_motors; ++j) {
-                    const size_t idx = start_count + j;
-                    const long int motor_id = motors_cfg_->motor_id_[idx];
-                    const size_t slot = (motor_id > 0 && motor_id <= 8) ? static_cast<size_t>(motor_id - 1) : j;
-                    if (slot >= 8) continue;
-                    const float signed_target = motor_target_[idx] * robot_cfg_->motor_sign_[idx];
-                    if (std::find(robot_cfg_->close_chain_motor_idx_.begin(), robot_cfg_->close_chain_motor_idx_.end(), idx) == robot_cfg_->close_chain_motor_idx_.end()) {
-                        pos[slot] = signed_target;
-                        kp[slot] = robot_cfg_->kp_[idx];
-                        kd[slot] = robot_cfg_->kd_[idx];
-                    } else {
-                        tau[slot] = signed_target;
-                    }
-                }
-                motors_[start_count]->motor_mit_cmd(pos, vel, kp, kd, tau);
-            });
-            count += num_motors;
-        }
-        thread_pool_->run_parallel(tasks);
-    } else {
-        exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
-            if (std::find(robot_cfg_->close_chain_motor_idx_.begin(), robot_cfg_->close_chain_motor_idx_.end(), idx) == robot_cfg_->close_chain_motor_idx_.end()){
-                motor->motor_mit_cmd(motor_target_[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx], robot_cfg_->kd_[idx], 0.0f);
-            } else {
-                motor->motor_mit_cmd(0.0f, 0.0f, 0.0f, 0.0f, motor_target_[idx] * robot_cfg_->motor_sign_[idx]);
-            }
-        });
-    }
+    motors_mit_cmd(1.0f, 1.0f, true);
 }
 
 void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
@@ -218,13 +182,9 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
         }
     }
 
-    exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
-        motor->motor_mit_cmd(motor_target_[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx]/2.5f, robot_cfg_->kd_[idx], 0.0f);
-    });
+    motors_mit_cmd(1.0f/2.5f, 1.0f);
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
-        motor->motor_mit_cmd(motor_target_[idx] * robot_cfg_->motor_sign_[idx], 0.0f, robot_cfg_->kp_[idx], robot_cfg_->kd_[idx], 0.0f);
-    });
+    motors_mit_cmd(1.0f, 1.0f);
 }
 
 void RobotInterface::refresh_joints() {
@@ -297,6 +257,50 @@ void RobotInterface::deinit_motors() {
         motor->deinit_motor();
     });
     is_init_.store(false);
+}
+
+void RobotInterface::motors_mit_cmd(float kp_scale, float kd_scale, bool close_chain_tau) {
+    std::unique_lock<std::mutex> lock(motors_mutex_);
+    std::vector<std::function<void()>> tasks;
+    size_t count = 0;
+    for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {
+        const size_t num_motors = motors_cfg_->motor_num_[bus];
+        const size_t start_count = count;
+        if (motors_cfg_->motor_interface_type_[bus] == "canfd") {
+            tasks.push_back([this, start_count, num_motors, kp_scale, kd_scale, close_chain_tau]() {
+                float pos[8] = {}, vel[8] = {}, kp[8] = {}, kd[8] = {}, tau[8] = {};
+                for (size_t j = 0; j < num_motors; ++j) {
+                    const size_t idx = start_count + j;
+                    const long int motor_id = motors_cfg_->motor_id_[idx];
+                    const size_t slot = (motor_id > 0 && motor_id <= 8) ? static_cast<size_t>(motor_id - 1) : j;
+                    if (slot >= 8) continue;
+                    const float signed_target = motor_target_[idx] * robot_cfg_->motor_sign_[idx];
+                    if (close_chain_tau && std::find(robot_cfg_->close_chain_motor_idx_.begin(), robot_cfg_->close_chain_motor_idx_.end(), idx) != robot_cfg_->close_chain_motor_idx_.end()) {
+                        tau[slot] = signed_target;
+                    } else {
+                        pos[slot] = signed_target;
+                        kp[slot] = robot_cfg_->kp_[idx] * kp_scale;
+                        kd[slot] = robot_cfg_->kd_[idx] * kd_scale;
+                    }
+                }
+                motors_[start_count]->motor_mit_cmd(pos, vel, kp, kd, tau);
+            });
+        } else {
+            tasks.push_back([this, start_count, num_motors, kp_scale, kd_scale, close_chain_tau]() {
+                for (size_t j = 0; j < num_motors; ++j) {
+                    const size_t idx = start_count + j;
+                    const float signed_target = motor_target_[idx] * robot_cfg_->motor_sign_[idx];
+                    if (close_chain_tau && std::find(robot_cfg_->close_chain_motor_idx_.begin(), robot_cfg_->close_chain_motor_idx_.end(), idx) != robot_cfg_->close_chain_motor_idx_.end()) {
+                        motors_[idx]->motor_mit_cmd(0.0f, 0.0f, 0.0f, 0.0f, signed_target);
+                    } else {
+                        motors_[idx]->motor_mit_cmd(signed_target, 0.0f, robot_cfg_->kp_[idx] * kp_scale, robot_cfg_->kd_[idx] * kd_scale, 0.0f);
+                    }
+                }
+            });
+        }
+        count += num_motors;
+    }
+    thread_pool_->run_parallel(tasks);
 }
 
 void RobotInterface::exec_motors_parallel(const std::function<void(std::shared_ptr<MotorDriver>&, int)>& cmd_func) {
