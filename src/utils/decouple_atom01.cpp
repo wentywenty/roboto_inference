@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0
+// Copyright (C) 2026 Luo1imasi
+
 #include "decouple_atom01.hpp"
 #include <iostream>
 

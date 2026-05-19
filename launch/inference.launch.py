@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0
+# Copyright (C) 2026 Luo1imasi
+
 ##launch file
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument

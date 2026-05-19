@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0
+# Copyright (C) 2026 Luo1imasi
 cmake_minimum_required(VERSION 3.16)
 project(roboto_inference)
 

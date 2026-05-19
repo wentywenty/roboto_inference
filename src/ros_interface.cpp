@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0
+// Copyright (C) 2026 Luo1imasi
+
 #include "inference_node.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
