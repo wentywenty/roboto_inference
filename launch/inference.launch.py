@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Luo1imasi
 
 ##launch file
+import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -13,13 +14,13 @@ def generate_launch_description():
 
     inference_config_arg = DeclareLaunchArgument(
         "inference_config",
-        default_value="inference.yaml",
+        default_value=os.path.join(pkg_share, "config", "inference.yaml"),
         description="Inference config yaml file path",
     )
 
     robot_config_arg = DeclareLaunchArgument(
         "robot_config",
-        default_value="robot.yaml",
+        default_value=os.path.join(pkg_share, "config", "robot.yaml"),
         description="Robot config yaml file path",
     )
 

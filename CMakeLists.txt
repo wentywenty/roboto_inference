@@ -99,6 +99,12 @@ install(DIRECTORY launch
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
+install(DIRECTORY models
+  DESTINATION share/${PROJECT_NAME}
+)
+install(DIRECTORY motions
+  DESTINATION share/${PROJECT_NAME}
+)
 
 install(FILES ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1 ${ONNXRUNTIME_LIB_DIR}/libonnxruntime.so.1.21.0
         DESTINATION lib OPTIONAL)
